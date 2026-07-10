@@ -1,0 +1,16 @@
+{
+  "name": "1042s-organizer",
+  "version": "2.0.0",
+  "description": "Adobe Acrobat JavaScript tool that splits and organizes a multi-recipient IRS Form 1042-S PDF by recipient (Box 13a), keeping each form with its instruction pages, sorting alphabetically, and letting you retrieve any recipient's form on demand.",
+  "keywords": ["1042-S", "irs", "tax", "acrobat", "pdf", "javascript", "withholding", "split-pdf"],
+  "license": "MIT",
+  "scripts": {
+    "test": "node test/mock-run.js && node test/stress-run.js && node test/random-run.js"
+  },
+  "files": [
+    "1042s-organizer.js",
+    "README.md",
+    "research/",
+    "test/"
+  ]
+}

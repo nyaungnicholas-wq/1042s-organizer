@@ -1,0 +1,19 @@
+# macOS
+.DS_Store
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Never commit real tax data or generated output PDFs
+*.pdf
+!research/**/*.pdf
+1042S_*.pdf
+_ORGANIZED_*.pdf
+_REVIEW_*.pdf
+index.csv
+
+# Editor
+.vscode/
+.idea/
+*.swp
