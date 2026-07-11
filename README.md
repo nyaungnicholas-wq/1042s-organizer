@@ -18,6 +18,22 @@ name in **Box 13a**. It:
 
 ---
 
+## See it work first — on the REAL IRS form (no Acrobat)
+Want proof before touching Acrobat? Run the built-in demo (JavaScript, via pdf-lib + pdfjs):
+```
+npm install
+npm run demo
+```
+It **downloads the actual IRS Form 1042-S** from irs.gov, stamps **different recipient names into
+Box 13a** on real Copy B pages, mixes in the real "Instructions for Recipient" page, and **shuffles
+them** into `demo/output/unorganized-1042s.pdf` (recipients out of order, A B A …). Then it reads the
+real text back the way Acrobat would and runs the **actual organizer logic** to write
+`demo/output/organized-1042s.pdf` (grouped + sorted, A A B …) plus one PDF per recipient. It verifies
+every stamped Box 13a name was read back correctly and that no page was lost. Open the two PDFs side
+by side to see exactly what the Acrobat version does to your real file.
+
+---
+
 ## What you need
 - **Adobe Acrobat Pro** (the free Reader can't split/save files — Pro is required).
 - Your 1042-S PDF must be **searchable** (real text, not a flat scan). You said it is. ✅

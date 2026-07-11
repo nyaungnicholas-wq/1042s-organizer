@@ -5,12 +5,18 @@
   "keywords": ["1042-S", "irs", "tax", "acrobat", "pdf", "javascript", "withholding", "split-pdf"],
   "license": "MIT",
   "scripts": {
-    "test": "node test/mock-run.js && node test/stress-run.js && node test/random-run.js"
+    "test": "node test/mock-run.js && node test/stress-run.js && node test/random-run.js",
+    "demo": "node demo/run-demo.js"
   },
   "files": [
     "1042s-organizer.js",
     "README.md",
     "research/",
-    "test/"
-  ]
+    "test/",
+    "demo/"
+  ],
+  "devDependencies": {
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^6.1.200"
+  }
 }
