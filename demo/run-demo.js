@@ -111,8 +111,9 @@ function makeDoc(pageWordLists, docPath) {
     var cp = await unorg.copyPages(srcDoc, [COPY_B]); var page = cp[0];
     page.drawText(nm, { x: BOX13A.x, y: BOX13A.y, size: BOX13A.size, font: helv, color: rgb(0, 0, 0) });
     unorg.addPage(page); pageName.push(nm);
-    var nIns = (rnd() < 0.6) ? 1 : 0;   // ~60% get the real instructions page after them
-    for (var z = 0; z < nIns; z++) { var ip = await unorg.copyPages(srcDoc, [INSTRUCTIONS]); unorg.addPage(ip[0]); pageName.push("(instructions)"); }
+    // EVERY form is followed by its correlating "Instructions for Recipient" page,
+    // so each form + instruction travels together through the shuffle and the organize.
+    var ip = await unorg.copyPages(srcDoc, [INSTRUCTIONS]); unorg.addPage(ip[0]); pageName.push("(instructions)");
   }
   try { unorg.getForm().flatten(); } catch (e) {}   // bake in the stamped names, drop empty fields
   var unorgBytes = await unorg.save();
@@ -161,6 +162,17 @@ function makeDoc(pageWordLists, docPath) {
   var covered = det.reviewPages.length + det.headerPages.length;
   for (gi = 0; gi < groups.length; gi++) covered += groups[gi].pages.length;
 
+  // each form has its correlating instruction, and they stay paired after organizing
+  var formPages = 0, instrPages = 0;
+  for (i = 0; i < pageName.length; i++) { if (pageName[i] === "(instructions)") instrPages++; else formPages++; }
+  var eachHasInstr = (formPages === instrPages);
+  var pairedOk = true;
+  for (i = 0; i < order.length; i++) {
+    if (pageName[order[i]] !== "(instructions)") {   // a form page -> next page must be its instruction
+      if (i + 1 >= order.length || pageName[order[i + 1]] !== "(instructions)") pairedOk = false;
+    }
+  }
+
   function names(list) { var o = []; for (var q = 0; q < list.length; q++) if (pageName[list[q]] !== "(instructions)") o.push(pageName[list[q]]); return o; }
   var origOrder = []; for (i = 0; i < pageName.length; i++) origOrder.push(i);
 
@@ -168,17 +180,20 @@ function makeDoc(pageWordLists, docPath) {
   console.log("  " + names(origOrder).join("  ->  "));
   console.log("\n=============== ORGANIZED (grouped + sorted A..Z) ===============");
   console.log("  " + names(order).join("  ->  "));
+  console.log("  (every name above = one real Copy B form + its Instructions-for-Recipient page, kept together)");
   console.log("\n=============== VERIFY ===============");
   console.log("real IRS form used ....... f1042s.pdf (Copy B + Instructions for Recipient)");
-  console.log("total pages .............. " + doc.numPages);
+  console.log("total pages .............. " + doc.numPages + " (" + formPages + " forms + " + instrPages + " instructions)");
   console.log("distinct recipients ...... " + groups.length);
   console.log("Box 13a names read OK .... " + readOk + " / " + (readOk + readBad) + (readBad ? "  *** " + readBad + " MISREAD ***" : ""));
   for (i = 0; i < mismatches.length; i++) console.log("     " + mismatches[i]);
+  console.log("every form has instruction " + (eachHasInstr ? "OK (" + formPages + " forms, " + instrPages + " instructions)" : "*** MISMATCH ***"));
+  console.log("form+instruction stay paired after organizing  " + (pairedOk ? "OK" : "*** BROKEN ***"));
   console.log("no page lost ............. " + (covered === doc.numPages ? "OK" : "MISMATCH " + covered + "/" + doc.numPages));
   console.log("\nFILES WRITTEN:");
   console.log("  UNORGANIZED : " + unorgPath);
   console.log("  ORGANIZED   : " + orgPath);
   console.log("  per-recipient (" + perCount + "): " + OUT + "/1042S_*.pdf");
 
-  process.exit((readBad === 0 && covered === doc.numPages) ? 0 : 1);
+  process.exit((readBad === 0 && covered === doc.numPages && eachHasInstr && pairedOk) ? 0 : 1);
 })().catch(function (e) { console.error("DEMO FAILED:", e); process.exit(1); });
