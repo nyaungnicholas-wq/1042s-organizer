@@ -116,6 +116,24 @@ are sanitized against spreadsheet formula-injection, since they come from the PD
 
 ---
 
+## More than 1042-S: 1099, W-2, and 1042 too
+The PDF can hold a mix of form types. The tool detects the form type on each page and reads the
+recipient/employee name from **that form's** box, then groups every form for the same person into
+**one file per recipient** (John Smith's 1042-S *and* his 1099 *and* his W-2 land in one
+`1042S_John Smith.pdf`, sorted A→Z). Each form keeps its instruction page.
+
+| Form | How the recipient is found | Status |
+|------|----------------------------|--------|
+| **1042-S** | Box 13a (below "13a", left of "13b", above "13c") | precise, tested on the real IRS form |
+| **1099 series** | value below the "RECIPIENT'S name" label | best-effort — calibrate with your sample |
+| **W-2** | employee name in box **e** ("Employee's first name…") | best-effort — calibrate with your sample |
+| **1042** (annual) | no recipient (it's the filer's summary) → goes to its own file under the withholding agent's name | routed separately |
+
+**Calibrating the other forms:** because every vendor lays out 1099/W-2 slightly differently, confirm
+detection on your file with `identifyForm_page(1)` (and `dumpWords(1)` if a name reads wrong), then tune
+the label lists in the `FORM_CONFIG` block near the top of the script. Send me a sample page of each
+form type (names can be redacted) and I'll finalize the exact boxes.
+
 ## The rule it follows (your algorithm)
 ```
 currentName = ""

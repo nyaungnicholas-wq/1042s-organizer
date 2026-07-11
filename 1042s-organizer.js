@@ -56,6 +56,20 @@ var CONFIG = {
 /* names that are NOT real entities — must never be merged across the document */
 var PLACEHOLDER_KEYS = { "unknownrecipient": 1, "unknown": 1, "withholdingratepool": 1, "withholdingratepoolgeneral": 1 };
 
+/* MULTI-FORM support. The PDF can contain 1042-S, 1099, W-2, and 1042 (annual) forms.
+   1042-S is precise (13a/13b/13c box). The 1099/W-2 name boxes are anchored on their
+   labels with best-effort defaults — CALIBRATE these with your sample forms by running
+   identifyForm(pageNum) and dumpWords(pageNum), then adjust the label token lists below. */
+var FORM_CONFIG = {
+  enable1099: true,
+  enableW2: true,
+  enable1042annual: true,
+  label1099: ["recipients", "name"],                 // 1099: "RECIPIENT'S name"
+  labelW2: ["employees", "first"],                   // W-2 box e: "Employee's first name and initial"
+  label1042agent: ["name", "of", "withholding", "agent"], // 1042 annual: filer, not a recipient
+  annualGroupName: "1042 Annual Return (filer)"       // 1042 annual pages go to their own file
+};
+
 /* ---------------------------------------------------------------------
    small utilities
    ------------------------------------------------------------------- */
@@ -251,15 +265,87 @@ function extractNameReadingOrder(words){
   return cleanName(picked.join(" "));
 }
 
+/* ---------------------------------------------------------------------
+   form-type detection + generic label-anchored name reader (1099 / W-2 / 1042)
+   ------------------------------------------------------------------- */
+function hasTok(words, tok){ return findAnchor(words, tok) != null; }
+function hasTokPrefix(words, pfx){ for (var i = 0; i < words.length; i++){ if (words[i].ntext.indexOf(pfx) === 0) return true; } return false; }
+
+/* find a label made of consecutive tokens on ~one line; returns its bbox + the matched words */
+function findLabel(words, seq){
+  if (!seq || !seq.length) return null;
+  var i, k, j;
+  for (i = 0; i < words.length; i++){
+    if (words[i].ntext !== seq[0] || !words[i].bb) continue;
+    var matched = [words[i]], ref = words[i], ok = true;
+    for (k = 1; k < seq.length; k++){
+      var best = null, bestdx = 1e9;
+      for (j = 0; j < words.length; j++){
+        var w = words[j];
+        if (w.ntext !== seq[k] || !w.bb || !ref.bb) continue;
+        if (Math.abs(w.yc - ref.yc) > CONFIG.labelLineTolPts * 3) continue;
+        var dx = w.xc - ref.xc; if (dx <= 0) continue;
+        if (dx < bestdx){ bestdx = dx; best = w; }
+      }
+      if (!best){ ok = false; break; }
+      matched.push(best); ref = best;
+    }
+    if (!ok) continue;
+    var xs = [], ys = [], m;
+    for (m = 0; m < matched.length; m++){ xs.push(matched[m].bb.xmin, matched[m].bb.xmax); ys.push(matched[m].bb.ymin, matched[m].bb.ymax); }
+    return { xmin: Math.min.apply(null, xs), xmax: Math.max.apply(null, xs), ymin: Math.min.apply(null, ys), ymax: Math.max.apply(null, ys),
+             xc: (Math.min.apply(null, xs) + Math.max.apply(null, xs)) / 2, yc: (Math.min.apply(null, ys) + Math.max.apply(null, ys)) / 2, words: matched };
+  }
+  return null;
+}
+
+/* read the value that sits just BELOW a label (PDF space: lower y), in a horizontal band */
+function nameBelowLabel(words, dims, label, opt){
+  if (!label) return "";
+  opt = opt || {};
+  var bandH = opt.bandH || 24, bandW = opt.bandW || Math.min(270, dims.w * 0.45);
+  var yTop = label.ymin - 1, yBot = label.ymin - bandH, xL = label.xmin - 4, xR = label.xmin + bandW;
+  var excl = {}, e, i, w, stop = opt.stop || {};
+  for (e = 0; e < label.words.length; e++) excl[label.words[e].i] = 1;
+  var picks = [];
+  for (i = 0; i < words.length; i++){
+    w = words[i];
+    if (!w.bb || excl[w.i] || w.text === "") continue;
+    if (stop[w.ntext]) continue;
+    if (w.yc > yTop || w.yc < yBot) continue;
+    if (w.xc < xL || w.xc > xR) continue;
+    picks.push(w);
+  }
+  if (!picks.length) return "";
+  if (picks.length > CONFIG.maxNameWords) picks = picks.slice(0, CONFIG.maxNameWords);
+  picks.sort(function (a, b){ if (Math.abs(a.yc - b.yc) > 4) return b.yc - a.yc; return a.xc - b.xc; });  // top line first, then left->right
+  var parts = []; for (i = 0; i < picks.length; i++) parts.push(picks[i].text);
+  return cleanName(parts.join(" "));
+}
+
+function is1099(words){ return hasTokPrefix(words, "1099") && hasTok(words, "recipients"); }
+function isW2(words){ return (hasTok(words, "wage") && hasTok(words, "statement")) || (hasTokPrefix(words, "w2") && hasTok(words, "employees")); }
+function is1042Annual(words){ return hasTok(words, "1042") && hasTok(words, "withholding") && hasTok(words, "agent") && !isFormPage(words); }
+
+/* identify the form type on a page and read its recipient/employee name */
+function identifyForm(words, dims){
+  if (isFormPage(words)) return { type: "1042-S", name: extractNamePosition(words, dims) };   // 13a/13b/13c box
+  if (FORM_CONFIG.enable1099 && is1099(words)) return { type: "1099", name: nameBelowLabel(words, dims, findLabel(words, FORM_CONFIG.label1099), { stop: { street: 1, address: 1, city: 1 } }) };
+  if (FORM_CONFIG.enableW2 && isW2(words)) return { type: "W-2", name: nameBelowLabel(words, dims, findLabel(words, FORM_CONFIG.labelW2), {}) };
+  if (FORM_CONFIG.enable1042annual && is1042Annual(words)) { var ag = nameBelowLabel(words, dims, findLabel(words, FORM_CONFIG.label1042agent), {}); return { type: "1042", name: ag || FORM_CONFIG.annualGroupName, annual: true }; }
+  return { type: null, name: "" };
+}
+
 function readPage(doc, p){
   var dims = pageDims(doc, p);
   var words = pageWords(doc, p);
-  var form = isFormPage(words);
-  var name = form ? extractNamePosition(words, dims) : "";
-  var alt = (CONFIG.crossCheck && form) ? extractNameReadingOrder(words) : "";
+  var f = identifyForm(words, dims);
+  var form = (f.type != null);
+  var name = f.name || "";
+  var alt = (CONFIG.crossCheck && f.type === "1042-S") ? extractNameReadingOrder(words) : "";
   var agree = null;
   if (name && alt) agree = (normTok(name) === normTok(alt));
-  return { page: p, form: form, name: name, alt: alt, agree: agree, nWords: words.length };
+  return { page: p, form: form, formType: f.type, annual: !!f.annual, name: name, alt: alt, agree: agree, nWords: words.length };
 }
 
 /* ---------------------------------------------------------------------
@@ -384,10 +470,16 @@ function verify(det, groups){
   var placeholders = 0;
   for (i = 0; i < groups.length; i++) if (groups[i].placeholder) placeholders++;
 
+  /* form-type breakdown (multi-form) */
+  var typeCount = {}, typeOrder = [], tt;
+  for (i = 0; i < det.perPage.length; i++){ tt = det.perPage[i].formType; if (tt){ if (!typeCount[tt]){ typeCount[tt] = 0; typeOrder.push(tt); } typeCount[tt]++; } }
+  var typeStr = []; for (i = 0; i < typeOrder.length; i++) typeStr.push(typeOrder[i] + ": " + typeCount[typeOrder[i]]);
+
   P("");
   P("==================== VERIFICATION REPORT ====================");
   P("Total pages ................ " + n);
   P("Form pages (with a name) ... " + formPages);
+  P("Form types ................. " + (typeStr.length ? typeStr.join(",  ") : "(none detected)"));
   P("No-name pages (instructions) " + instrPages);
   P("Packets (recipient runs) ... " + det.segments.length);
   P("Unique recipient files ..... " + groups.length + (placeholders ? ("  (" + placeholders + " placeholder file(s) kept separate)") : ""));
@@ -659,11 +751,21 @@ function organize(){
 function testName(humanPage){
   var doc = G_DOC, p = humanPage - 1;
   var r = readPage(doc, p);
-  P("Page " + humanPage + ":  form=" + r.form + "  words=" + r.nWords);
+  P("Page " + humanPage + ":  form=" + r.form + "  type=" + r.formType + "  words=" + r.nWords);
   P("   name (position) : \"" + r.name + "\"");
   P("   name (reading)  : \"" + r.alt + "\"");
   P("   agree           : " + r.agree);
   return r;
+}
+/* which form type is this page, and what name did each detector read? (calibration) */
+function identifyForm_page(humanPage){
+  var doc = G_DOC, p = humanPage - 1, words = pageWords(doc, p), dims = pageDims(doc, p);
+  var f = identifyForm(words, dims);
+  P("Page " + humanPage + ":  detected form type = " + (f.type || "(not a form)") + (f.annual ? "  [annual/filer]" : ""));
+  P("   recipient/name read: \"" + f.name + "\"");
+  P("   signatures: 1042-S(13a/b/c)=" + isFormPage(words) + "  1099=" + is1099(words) + "  W-2=" + isW2(words) + "  1042annual=" + is1042Annual(words));
+  P("   (if the name is wrong, run dumpWords(" + humanPage + ") and adjust FORM_CONFIG labels)");
+  return f;
 }
 function scan(a, b){
   var doc = G_DOC, p, r;
@@ -686,7 +788,8 @@ function dumpWords(humanPage){
 }
 
 P("1042-S Organizer (v2) loaded.");
-P("Calibrate:  testName(1)   scan(1,20)   dumpWords(1)");
+P("Calibrate:  testName(1)   identifyForm_page(1)   scan(1,20)   dumpWords(1)");
+P("Multi-form: handles 1042-S + 1099 + W-2 + 1042. Tune FORM_CONFIG labels with your samples.");
 P("Run:        organize()      (dry run first; then set CONFIG.dryRun=false)");
 P("Retrieve:   find(\"name\")   openForm(\"Exact Name\")");
 P("Manifest:   exportIndexCSV()   (a spreadsheet of recipient -> file -> pages)");
