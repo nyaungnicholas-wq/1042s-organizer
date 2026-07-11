@@ -213,6 +213,21 @@ then `organize()`. No changes needed unless a vendor changes the form's text lay
 - **Windows flashing open/closed during the combined build** → normal; Acrobat opens the new
   file to assemble it. Use `CONFIG.mode = "split"` if you'd rather avoid that.
 
+## Adobe Acrobat compatibility (verified)
+The organizer script was checked against Adobe's official *JavaScript for Acrobat API Reference*:
+- It uses **only documented Acrobat API methods** — `console.println`, `getPageNumWords` /
+  `getPageNthWord` / `getPageNthWordQuads`, `getPageBox` / `getPageRotation`, `extractPages` /
+  `insertPages`, `app.openDoc`, `saveAs`, `closeDoc` — each with the correct signature and argument form.
+- Every file-writing call (`extractPages`, `insertPages`, `saveAs`, `openDoc`) is a **privileged**
+  operation that is permitted from the **JavaScript Console** (Cmd/Ctrl+J) — the context these
+  instructions tell you to use — so nothing needs a trusted function.
+- The code is written to **ES3** (the safe target for Acrobat's engine): no arrow functions,
+  `let`/`const`, template literals, or ES5+ array methods. The single modern call
+  (`String.prototype.normalize`, for macOS filename comparison) is feature-detected and degrades
+  gracefully on older engines.
+- **Verdict: it pastes-and-runs in Acrobat Pro's Console with no changes.** One caveat, already handled:
+  rotated pages can misread, so the tool detects and flags them and asks you to un-rotate first.
+
 ## Developer note
 The real detection/grouping/sorting/security logic is tested against synthetic 1042-S data under
 Node — no Acrobat needed. Run all of it with:
