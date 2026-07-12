@@ -12,7 +12,7 @@ if (!console.println) console.println = function () {};
 var FS, WLOG, Q;                                  // virtual file system, write log, setTimeout queue
 global.app = null;                                // set per-mode below
 eval(fs.readFileSync(path.join(__dirname, "..", "1042s-organizer.js"), "utf8"));
-var FNS = { "_scanTick()": _scanTick, "_writeTick()": _writeTick, "_combineTick()": _combineTick };
+var FNS = { "_scanTick()": _scanTick, "_writeTick()": _writeTick, "_combineTick()": _combineTick, "_dupeTick()": _dupeTick };
 
 /* ---- synthetic 1042-S pages ---- */
 function quad(w) { return [[w.x0, w.y0, w.x1, w.y0, w.x1, w.y1, w.x0, w.y1]]; }

@@ -197,27 +197,14 @@ function mightBeAnyForm(cheap){
   return false;
 }
 
-function pageWords(doc, p){
-  var cheap = pageWordsTextOnly(doc, p);
-  if (!mightBeAnyForm(cheap)) return cheap;   // definitely not a form: skip all coordinate lookups
-  var out = [], i, bb, xc, yc;
-  for (i = 0; i < cheap.length; i++){
-    bb = null;
-    try { bb = bboxFromQuads(doc.getPageNthWordQuads(p, i)); } catch (e3) { bb = null; }
-    xc = 0; yc = 0;
-    if (bb){ xc = (bb.xmin + bb.xmax) / 2; yc = (bb.ymin + bb.ymax) / 2; }
-    out.push({ i: cheap[i].i, text: cheap[i].text, ntext: cheap[i].ntext, bb: bb, xc: xc, yc: yc });
-  }
-  return out;
-}
-
 function findAnchor(words, tok){
   for (var i = 0; i < words.length; i++){ if (words[i].ntext === tok) return words[i]; }
   return null;
 }
 
-function isFormPage(words){
-  var a = findAnchor(words, "13a"), b = findAnchor(words, "13b"), c = findAnchor(words, "13c");
+/* the 13a/13b/13c recipient-box geometry rule, shared by isFormPage and the
+   cheap 3-word probe below so the two can never disagree */
+function anchorsFormBox(a, b, c){
   if (!a || !b || !c || !a.bb || !b.bb || !c.bb) return false;
   var vgap = Math.abs(a.yc - c.yc);
   if (vgap < CONFIG.minRowGapPts) return false;
@@ -225,6 +212,41 @@ function isFormPage(words){
   if (Math.abs(a.xc - c.xc) > CONFIG.colAlignTolPts) return false;
   if (b.xc <= a.xc) return false;
   return true;
+}
+
+function isFormPage(words){
+  return anchorsFormBox(findAnchor(words, "13a"), findAnchor(words, "13b"), findAnchor(words, "13c"));
+}
+
+function fillQuad(doc, p, w){
+  var bb = null;
+  try { bb = bboxFromQuads(doc.getPageNthWordQuads(p, w.i)); } catch (e) { bb = null; }
+  w.bb = bb;
+  if (bb){ w.xc = (bb.xmin + bb.xmax) / 2; w.yc = (bb.ymin + bb.ymax) / 2; }
+  return w;
+}
+
+/* real IRS instruction pages MENTION "13a" in prose, so token presence alone
+   can't rule them out. Probe: fetch coordinates for just the FIRST 13a/13b/13c
+   words (3 calls) and apply the same geometry rule isFormPage uses. Only when
+   that box shape is really there (or another form type text-matches) do we pay
+   for the whole page's coordinates. */
+function pageWords(doc, p){
+  var cheap = pageWordsTextOnly(doc, p);
+  var other = (FORM_CONFIG.enable1099 && hasTokPrefix(cheap, "1099") && hasTok(cheap, "recipients")) ||
+              (FORM_CONFIG.enableW2 && ((hasTok(cheap, "wage") && hasTok(cheap, "statement")) || (hasTokPrefix(cheap, "w2") && hasTok(cheap, "employees")))) ||
+              (FORM_CONFIG.enable1042annual && hasTok(cheap, "1042") && hasTok(cheap, "withholding") && hasTok(cheap, "agent"));
+  var has13a = hasTok(cheap, "13a");
+  if (!has13a && !other) return cheap;                    // plain prose: zero coordinate calls
+  if (has13a && !other){
+    var a = findAnchor(cheap, "13a"), b = findAnchor(cheap, "13b"), c = findAnchor(cheap, "13c");
+    if (!b || !c) return cheap;                           // mentions 13a but lacks the box labels
+    fillQuad(doc, p, a); fillQuad(doc, p, b); fillQuad(doc, p, c);
+    if (!anchorsFormBox(a, b, c)) return cheap;           // prose mention: 3 calls instead of ~350
+  }
+  var out = [], i;
+  for (i = 0; i < cheap.length; i++) out.push(fillQuad(doc, p, { i: cheap[i].i, text: cheap[i].text, ntext: cheap[i].ntext, bb: null, xc: 0, yc: 0 }));
+  return out;
 }
 
 function extractNamePosition(words, dims){
@@ -444,7 +466,35 @@ function dice(a, b){
   return (2 * inter) / (na + nb);
 }
 
-function verify(det, groups){
+/* bigram profile per name, computed ONCE — the pairwise near-dupe loop is
+   O(n^2) and rebuilding bigrams inside it froze Acrobat at ~400 names */
+function nearDupeProfiles(groups){
+  var prof = [], i, pk;
+  for (i = 0; i < groups.length; i++){
+    var nt = normTok(groups[i].displayName);
+    var bg = bigrams(nt), tot = 0;
+    for (pk in bg){ if (bg.hasOwnProperty(pk)) tot += bg[pk]; }
+    prof.push({ nt: nt, bg: bg, tot: tot });
+  }
+  return prof;
+}
+
+/* compare rows i0..i1 (exclusive) against all later names; append hits to out.
+   Row-ranged so the async runner can spread the scan across ticks. */
+function nearDupeRows(groups, prof, i0, i1, out){
+  var i, j, pg2;
+  for (i = i0; i < i1; i++) for (j = i + 1; j < groups.length; j++){
+    if (groups[i].placeholder || groups[j].placeholder) continue;
+    if (prof[i].nt === prof[j].nt) continue;
+    if (prof[i].nt.length < 2 || prof[j].nt.length < 2) continue;
+    var inter = 0;
+    for (pg2 in prof[i].bg){ if (prof[i].bg.hasOwnProperty(pg2) && prof[j].bg[pg2]) inter += Math.min(prof[i].bg[pg2], prof[j].bg[pg2]); }
+    var d = (2 * inter) / (prof[i].tot + prof[j].tot);
+    if (d >= CONFIG.similarNameThreshold) out.push({ a: groups[i].displayName, b: groups[j].displayName, score: Math.round(d * 100) / 100 });
+  }
+}
+
+function verify(det, groups, preDupes){
   var i, j, g;
   var n = det.numPages;
   var formPages = 0, instrPages = 0;
@@ -468,13 +518,10 @@ function verify(det, groups){
     if (g.pages.length > outlierThreshold) outliers.push({ name: g.displayName, size: g.pages.length, first: g.pages[0] + 1 });
     if (!g.placeholder && g.segCount > 1) multiRun.push({ name: g.displayName, runs: g.segCount });
   }
-  if (groups.length <= CONFIG.nearDupeMaxNames){
-    for (i = 0; i < groups.length; i++) for (j = i + 1; j < groups.length; j++){
-      if (groups[i].placeholder || groups[j].placeholder) continue;
-      if (normTok(groups[i].displayName) === normTok(groups[j].displayName)) continue;
-      var d = dice(groups[i].displayName, groups[j].displayName);
-      if (d >= CONFIG.similarNameThreshold) nearDupes.push({ a: groups[i].displayName, b: groups[j].displayName, score: Math.round(d * 100) / 100 });
-    }
+  if (preDupes) nearDupes = preDupes;                       // computed in chunks by the async runner
+  else if (groups.length <= CONFIG.nearDupeMaxNames){
+    var prof = nearDupeProfiles(groups);
+    nearDupeRows(groups, prof, 0, groups.length, nearDupes);
   }
 
   var placeholders = 0;
@@ -703,9 +750,10 @@ function rebuildIndex(){
    State lives in the global _RUN so it survives across the scheduled callbacks.
    --------------------------------------------------------------------------- */
 var _RUN = null;
-var SCAN_CHUNK = 10;      // pages read per batch (small = stays responsive, never "not responding")
+var SCAN_CHUNK = 5;       // pages read per batch (small = stays responsive, never "not responding")
 var WRITE_CHUNK = 3;      // per-recipient files written per batch
 var COMBINE_CHUNK = 25;   // page-ranges merged into the combined file per batch
+var DUPE_ROWS = 25;       // near-duplicate-name rows compared per batch
 
 function _asyncAvail(){ try { return !!(app && app.setTimeOut); } catch (e){ return false; } }
 function _next(expr, fn){
@@ -744,18 +792,37 @@ function _scanTick(){
 
 function _scanDone(){
   var R = _RUN;
-  var det = scanResult(R.S);
-  var groups = groupByRecipient(det.segments);
-  assignFilenames(groups, R.folder);
-  verify(det, groups);
+  R.det = scanResult(R.S);
+  R.groups = groupByRecipient(R.det.segments);
+  assignFilenames(R.groups, R.folder);
+  R.dupes = [];
+  if (R.groups.length <= CONFIG.nearDupeMaxNames && R.groups.length > 1){
+    R.prof = nearDupeProfiles(R.groups);
+    R.di = 0;
+    P("Checking " + R.groups.length + " names for near-duplicates...");
+    _dupeTick();
+  } else _reportDone();
+}
+
+function _dupeTick(){
+  var R = _RUN; if (!R) return;
+  var end = Math.min(R.di + DUPE_ROWS, R.groups.length);
+  nearDupeRows(R.groups, R.prof, R.di, end, R.dupes);
+  R.di = end;
+  if (R.di < R.groups.length) _next("_dupeTick()", _dupeTick);
+  else { R.prof = null; _reportDone(); }
+}
+
+function _reportDone(){
+  var R = _RUN;
+  var det = R.det, groups = R.groups;
+  verify(det, groups, R.dupes);
   P("Output folder: " + R.folder);
 
   var i, collide = 0;
   for (i = 0; i < groups.length; i++) if (samePath(groups[i].file, R.src)) collide++;
   if (samePath(R.folder + CONFIG.combinedName, R.src)) collide++;
   if (collide) P(">>> WARNING: " + collide + " output path(s) match your source file name and will be SKIPPED to protect the original.");
-
-  R.det = det; R.groups = groups;
 
   if (CONFIG.dryRun){
     buildIndex(groups, false, {});
