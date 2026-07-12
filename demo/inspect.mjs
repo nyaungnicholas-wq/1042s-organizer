@@ -2,8 +2,9 @@
 import fs from "fs";
 import { PDFDocument } from "pdf-lib";
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
+import { ensureForm } from "./assets.mjs";
 
-const bytes = fs.readFileSync(new URL("./assets/f1042s.pdf", import.meta.url));
+const bytes = fs.readFileSync(await ensureForm("f1042s.pdf"));
 
 // ---- pdf-lib: pages + form fields ----
 const doc = await PDFDocument.load(bytes, { updateMetadata: false });

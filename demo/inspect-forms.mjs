@@ -1,6 +1,7 @@
 /* Find, on each real IRS form, the form signature and the recipient/employee name box. */
 import fs from "fs";
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
+import { ensureForm } from "./assets.mjs";
 
 const FORMS = {
   "1099-NEC": "f1099nec.pdf",
@@ -10,7 +11,7 @@ const FORMS = {
 const LABELS = /recipient'?s\s+name|payer'?s\s+name|employee'?s\s+(first|name)|name\s+of\s+withholding\s+agent|withholding\s+agent'?s\s+name|1099|1042|W-2|Wage and Tax/i;
 
 for (const [id, file] of Object.entries(FORMS)) {
-  const bytes = fs.readFileSync(new URL("./assets/" + file, import.meta.url));
+  const bytes = fs.readFileSync(await ensureForm(file));
   const pdf = await getDocument({ data: new Uint8Array(bytes), useSystemFonts: true }).promise;
   console.log(`\n===== ${id}  (${file}, ${pdf.numPages} pages) =====`);
   for (let p = 1; p <= Math.min(pdf.numPages, 2); p++) {
