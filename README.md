@@ -1,5 +1,20 @@
 # 1042-S Organizer — for Adobe Acrobat
 
+## ▶ Use it in 30 seconds (copy-paste, one file)
+
+Everything is in **one self-contained file** — nothing to install.
+
+1. **Open the script → [`1042s-organizer.js`](1042s-organizer.js)**, then click GitHub's
+   **"Copy raw file"** button (top-right of the file box) to copy the whole thing.
+   *(Direct raw link: https://raw.githubusercontent.com/nyaungnicholas-wq/1042s-organizer/main/1042s-organizer.js — Select-All, Copy.)*
+2. In **Adobe Acrobat Pro**, press **Cmd+J** (Mac) / **Ctrl+J** (Windows) to open the JavaScript Console.
+3. **Paste**, select all, press **Ctrl+Enter** to run it. Then type `organize()`.
+
+That's it. The `demo/`, `test/`, and `research/` folders are extras for proof and developers — you
+never need them to use the tool. Full step-by-step and calibration guide is below.
+
+---
+
 Splits and organizes a big multi-recipient **IRS Form 1042-S** PDF by the recipient's
 name in **Box 13a**. It:
 
