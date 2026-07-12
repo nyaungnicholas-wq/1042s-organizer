@@ -1,3 +1,19 @@
+/* ===== QUICK WRITE TEST — runs the moment you paste this in =====
+   Tells you immediately whether Acrobat can save files to your folder,
+   and whether the PDF is locked. Look at these 3 lines first. ================ */
+try {
+  var __d = this;
+  if (__d && __d.path) {
+    var __f = String(__d.path).replace(/[^\/]+$/, "");
+    try { console.println("PDF secured?   " + __d.securityHandler); } catch (e0) {}
+    try { __d.extractPages(0, 0, __f + "_probe1.pdf"); console.println("clean write:   OK   (delete _probe1.pdf later)"); }
+    catch (e1) { console.println("clean write:   FAILED  " + e1); }
+    try { __d.extractPages(0, 0, __f + "_probe with spaces.pdf"); console.println("spaces write:  OK   (delete it later)"); }
+    catch (e2) { console.println("spaces write:  FAILED  " + e2); }
+    console.println("---- if a write FAILED, that's why organize() can't save. Send me these lines. ----");
+  }
+} catch (eProbe) {}
+
 /* ===========================================================================
 
      ORGANIZE 1042-S TAX FORMS  —  paste this whole file into Adobe Acrobat
