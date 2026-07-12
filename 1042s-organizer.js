@@ -1,27 +1,50 @@
-/* =====================================================================
-   IRS 1042-S ORGANIZER  —  Adobe Acrobat JavaScript   (v2, hardened)
-   ---------------------------------------------------------------------
-   WHAT IT DOES
-     Reads a big multi-recipient 1042-S PDF, finds each recipient's name
-     in Box 13a, groups every page that belongs to a recipient (the form
-     copies AND the no-name instruction pages that follow them), sorts the
-     recipients alphabetically (turns  A B A  into  A A B ), and writes:
-        • one PDF per recipient   (named after the recipient)  -> "give me my form"
-        • one combined sorted PDF (everyone, grouped + alphabetical)
-     It DOUBLE-CHECKS itself and prints a report before/after writing.
+/* ===========================================================================
 
-   HOW TO RUN  (see README.md for the full walkthrough)
-     1. Open your 1042-S PDF in Acrobat Pro and SAVE it to disk once.
-     2. Open the JavaScript Console:  Cmd+J (Mac) / Ctrl+J (Windows).
-        (Enable it first: Preferences > JavaScript > check both boxes.)
-     3. Paste this ENTIRE file, select all, press Ctrl+Enter to load it.
-     4. CALIBRATE:   testName(1)    scan(1, 20)     (confirm names read right)
-     5. DRY RUN:     organize()                     (analyzes, writes NOTHING)
-     6. REAL RUN:    CONFIG.dryRun = false           then   organize()
-     7. RETRIEVE:    find("Smith")                   (opens their PDF)
+     ORGANIZE 1042-S TAX FORMS  —  paste this whole file into Adobe Acrobat
 
-   Your original PDF is never modified. Written files land next to it by default.
-   ===================================================================== */
+   ---------------------------------------------------------------------------
+   WHAT THIS DOES
+     You have ONE big PDF with 1042-S forms for lots of different people, all
+     mixed up. This sorts them by the person's name (Box 13a), keeps each form
+     together with its instruction page, and saves a clean, separate PDF for
+     each person. Your original file is NEVER changed.
+
+   ---------------------------------------------------------------------------
+   HOW TO USE IT  —  just follow these steps in order:
+
+     STEP 1.  Open your big PDF in Adobe Acrobat (the paid "Pro" version).
+
+     STEP 2.  Turn on the code box (you only do this once, ever):
+                • Windows:  Edit menu  > Preferences > JavaScript
+                • Mac:      Acrobat menu > Settings   > JavaScript
+              Check BOTH boxes that mention JavaScript, then click OK.
+
+     STEP 3.  Press   Ctrl + J   (Windows)   or   Command + J   (Mac).
+              A box opens at the bottom of the screen. That is where code goes.
+
+     STEP 4.  Copy ALL of this file (top to bottom), paste it into that box,
+              then press   Ctrl + Enter   to load it.
+
+     STEP 5.  Type this and press Ctrl + Enter:
+
+                   organize()
+
+              It shows you a PREVIEW first and saves NOTHING yet. Read it.
+
+     STEP 6.  If the preview looks right, type these two lines (press
+              Ctrl + Enter after each one):
+
+                   CONFIG.dryRun = false
+                   organize()
+
+              Your organized PDFs are now saved in the SAME folder as your
+              big PDF — one file per person, plus one combined sorted file.
+
+   ---------------------------------------------------------------------------
+   TO FIND ONE PERSON'S FORM LATER:   type   find("their name")   and Enter.
+
+   That's it. Nothing here deletes or changes your original PDF.
+   =========================================================================== */
 
 var G_DOC = this;   /* captured at paste time = your active PDF */
 
