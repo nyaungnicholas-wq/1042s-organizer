@@ -244,6 +244,24 @@ console.log("\n=== IN-PLACE with movePage refused (Document Assembly locked) ===
   CONFIG.mode = "both";
 })();
 
+console.log("\n=== REAL RUN MUST NOT USE setTimeOut (writes must stay privileged) ===");
+(function () {
+  _SCAN_CACHE = null; FS = {}; Q = [];
+  var timerCalls = 0;
+  var appR = makeApp(false); appR.setTimeOut = function (expr) { timerCalls++; Q.push(expr); return {}; };
+  global.app = appR; G_DOC = makeDoc(); CONFIG.mode = "both"; CONFIG.dryRun = false;
+  organize(); while (Q.length) FNS[Q.shift()]();
+  check("real run wrote all 10 recipient files", (function () { var n = 0, k; for (k in FS) if (k.replace(/^.*\//, "").indexOf("1042S_") === 0) n++; return n === 10; })());
+  check("real run NEVER scheduled a setTimeOut (would break privileged writes)", timerCalls === 0);
+
+  _SCAN_CACHE = null; FS = {}; Q = []; timerCalls = 0;
+  var appP = makeApp(false); appP.setTimeOut = function (expr) { timerCalls++; Q.push(expr); return {}; };
+  global.app = appP; G_DOC = makeDoc(); CONFIG.dryRun = true;
+  organize(); while (Q.length) FNS[Q.shift()]();
+  check("preview (read-only) DID chunk via setTimeOut (no freeze)", timerCalls > 0);
+  CONFIG.dryRun = false;
+})();
+
 console.log("\n=== SCAN CACHE (preview then real run must not re-read) ===");
 (function () {
   _SCAN_CACHE = null; FS = {}; Q = []; global.app = makeApp(false); G_DOC = makeDoc(); CONFIG.mode = "both";

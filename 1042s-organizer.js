@@ -844,56 +844,111 @@ function organize(){
   if (!doc || !doc.numPages){ P("ERROR: no active PDF. Open your PDF, make it the front window, then re-paste this script."); return; }
   if (!doc.path){ P("ERROR: this PDF isn't saved to disk. Do File > Save first, then run organize() again."); return; }
 
-  try { console.clear(); } catch (e) {}   // Acrobat's console buffer is tiny; start each run empty
+  try { console.clear(); } catch (e) {}
   P("========================================================");
   P("  1042-S ORGANIZER");
   P("  Pages: " + doc.numPages + "   dryRun=" + CONFIG.dryRun + "   mode=" + CONFIG.mode);
   P("========================================================");
 
-  /* the #1 real-world blocker: the PDF's own security settings */
   var sec = null; try { sec = doc.securityHandler; } catch (eSec) {}
-  if (sec) P("NOTE: this PDF is SECURED (" + sec + "). If File > Properties > Security shows\n      'Page Extraction: Not Allowed', Acrobat will refuse to split it into files.");
+  if (sec) P("NOTE: this PDF reports a security handler (" + sec + ").");
 
-  /* on a real file-writing run, prove we CAN write ONE page BEFORE scanning
-     1,000+ pages — so a blocked document fails in 2 seconds with the true
-     reason instead of 108 failures after a long scan. */
+  var folder = (CONFIG.outputFolder && CONFIG.outputFolder.length) ? ensureSlash(CONFIG.outputFolder) : folderOf(doc.path);
+
+  /* PREVIEW (dryRun) is read-only, so it is safe (and freeze-free) to chunk via
+     app.setTimeOut. The REAL run must NOT run inside a timer: Acrobat forbids
+     privileged file writes (extractPages/saveAs/openDoc) from a setTimeOut
+     callback -> "NotAllowedError: Security settings prevent access". So real
+     runs go straight through _runSync in the console's own privileged context. */
+  if (CONFIG.dryRun && _asyncAvail()){
+    _RUN = { doc: doc, src: doc.path, n: doc.numPages, p: 0, S: newScanState(doc.numPages), folder: folder, async: true };
+    if (_SCAN_CACHE && _SCAN_CACHE.path === _RUN.src && _SCAN_CACHE.n === _RUN.n){
+      P("Reusing the scan from a previous preview (no re-read)...");
+      _RUN.det = _SCAN_CACHE.det; _afterScanData(); return;
+    }
+    P("Reading " + _RUN.n + " pages (preview)... progress below; Acrobat stays usable.");
+    _scanTick(); return;
+  }
+
+  _runSync(doc, folder);
+}
+
+/* the REAL, file-writing / page-moving run: fully synchronous so every Acrobat
+   privileged operation executes in the console's trusted context and is allowed. */
+function _runSync(doc, folder){
+  var src = doc.path, i;
+
   if (!CONFIG.dryRun && CONFIG.mode !== "inplace"){
-    var tFolder = (CONFIG.outputFolder && CONFIG.outputFolder.length) ? ensureSlash(CONFIG.outputFolder) : folderOf(doc.path);
-    var tPath = tFolder + "_TEST_DELETE_ME.pdf";
-    try {
-      xExtract(doc, 0, 0, tPath);
-      P("Write self-test OK (made " + tPath + " — you can delete it).");
-    } catch (eTest){
+    var tPath = folder + "_TEST_DELETE_ME.pdf";
+    try { xExtract(doc, 0, 0, tPath); P("Write self-test OK (you can delete " + tPath + ")."); }
+    catch (eTest){
       P("");
-      P("*** STOPPING BEFORE THE SCAN: Acrobat refused a simple 1-page write.");
+      P("*** STOPPED: Acrobat refused a 1-page test write.");
       P("*** Error: " + eTest.toString());
-      P("*** Most common causes:");
-      P("***   1) The PDF is SECURED against page extraction.");
-      P("***      Check: File > Properties > Security tab > 'Page Extraction'.");
-      P("***      If it says 'Not Allowed', no script can split it — you need the");
-      P("***      unlocked original (or the permissions password) from whoever made it.");
-      P("***   2) Acrobat can't write to this folder — try moving the PDF to a new");
-      P("***      folder like C:\\1042s\\ and running again.");
-      P("*** ALTERNATIVE that avoids file-writing entirely: reorder THIS open PDF");
-      P("*** in place —  CONFIG.mode = \"inplace\"  then  organize()  (then File > Save).");
+      if (String(eTest).indexOf("NotAllowed") >= 0 || String(eTest).indexOf("Security settings") >= 0){
+        P("*** This means the save was blocked. Make sure you run  organize()  by typing it");
+        P("*** in the console yourself (not from a button/menu), and that Preferences >");
+        P("*** Security (Enhanced) isn't blocking it. Or try  CONFIG.mode = \"inplace\".");
+      } else {
+        P("*** If the PDF is secured: File > Properties > Security > Page Extraction.");
+        P("*** Or move the PDF to a plain folder like  C:\\1042s\\  and re-run.");
+      }
       return;
     }
   }
 
-  _RUN = {
-    doc: doc, src: doc.path, n: doc.numPages, p: 0,
-    S: newScanState(doc.numPages),
-    folder: (CONFIG.outputFolder && CONFIG.outputFolder.length) ? ensureSlash(CONFIG.outputFolder) : folderOf(doc.path),
-    async: _asyncAvail()
-  };
-  if (_SCAN_CACHE && _SCAN_CACHE.path === _RUN.src && _SCAN_CACHE.n === _RUN.n){
-    P("Reusing the scan from your preview (no need to re-read the pages)...");
-    _RUN.det = _SCAN_CACHE.det;
-    _afterScanData();
+  var det;
+  if (_SCAN_CACHE && _SCAN_CACHE.path === src && _SCAN_CACHE.n === doc.numPages){
+    P("Reusing the scan from your preview (no re-read).");
+    det = _SCAN_CACHE.det;
+  } else {
+    P("Reading " + doc.numPages + " pages (Acrobat may look busy for a bit — this is the slow step)...");
+    det = detectSegments(doc);
+    _SCAN_CACHE = { path: src, n: doc.numPages, det: det };
+  }
+  var groups = groupByRecipient(det.segments);
+  assignFilenames(groups, folder);
+  verify(det, groups);
+
+  if (CONFIG.dryRun){
+    buildIndex(groups, false, {});
+    P("");
+    P(">>> PREVIEW complete - nothing changed.");
+    P(">>> Set  CONFIG.dryRun = false  then  organize()  to " + (CONFIG.mode === "inplace" ? "reorder this PDF." : "save the files."));
     return;
   }
-  P("Reading " + _RUN.n + " pages... progress shows below. Acrobat stays usable — please DON'T force-quit.");
-  _scanTick();
+
+  if (CONFIG.mode === "inplace"){
+    var ord = [], gi, pi;
+    for (gi = 0; gi < groups.length; gi++) for (pi = 0; pi < groups[gi].pages.length; pi++) ord.push(groups[gi].pages[pi]);
+    for (pi = 0; pi < det.headerPages.length; pi++) ord.push(det.headerPages[pi]);
+    for (pi = 0; pi < det.reviewPages.length; pi++) ord.push(det.reviewPages[pi]);
+    var ops = reorderPlan(ord), mfail = 0;
+    P("Reordering " + ops.length + " pages inside THIS PDF...");
+    for (i = 0; i < ops.length; i++){
+      try { doc.movePage(ops[i].from, ops[i].after); }
+      catch (e){ mfail++; if (mfail === 1) P("  movePage refused: " + e.toString()); }
+      if ((i + 1) % 200 === 0) P("  moved " + (i + 1) + " / " + ops.length + " pages");
+    }
+    _SCAN_CACHE = null;
+    P("");
+    if (mfail){ P(">>> " + mfail + " page moves were REFUSED - this PDF is locked against Document Assembly."); P(">>> Close WITHOUT saving. You need the unlocked original."); }
+    else { P(">>> DONE - the pages in THIS open PDF are now grouped by name, A to Z (each form with its instruction)."); P(">>> Use  File > Save  to keep it, or close WITHOUT saving to undo."); }
+    return;
+  }
+
+  var didSplit = (CONFIG.mode === "split" || CONFIG.mode === "both"), failed = {};
+  if (didSplit) failed = writeSplit(doc, groups, src);
+  if (CONFIG.mode === "combine" || CONFIG.mode === "both") writeCombined(doc, groups, folder, src);
+  writeRangesFile(doc, det.headerPages, folder + "_REVIEW_unmatched_head.pdf", src, "pages before the first named form");
+  writeRangesFile(doc, det.reviewPages, folder + "_REVIEW_unreadable_forms.pdf", src, "unreadable/uncertain form pages");
+  buildIndex(groups, didSplit, failed);
+  var nFailed = 0, k; for (k in failed) if (failed.hasOwnProperty(k)) nFailed++;
+  P("");
+  P(">>> DONE.");
+  if (didSplit) P(">>> Recipients: " + groups.length + "   Per-recipient files written: " + (groups.length - nFailed) + (nFailed ? ("   FAILED/SKIPPED: " + nFailed) : ""));
+  if (CONFIG.mode === "combine" || CONFIG.mode === "both") P(">>> Combined file: " + folder + CONFIG.combinedName);
+  if (didSplit) P(">>> Retrieve a recipient with:  find(\"name\")   Manifest: exportIndexCSV()");
 }
 
 function _scanTick(){
