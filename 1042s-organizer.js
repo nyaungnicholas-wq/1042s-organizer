@@ -135,6 +135,26 @@ function samePath(a, b){
   if (!a || !b) return false;
   return canonPath(a) === canonPath(b);
 }
+
+/* Some Acrobat builds reject the object-literal call form for the page/file
+   methods with "RangeError: Invalid argument value" and only accept the
+   classic positional signatures. Try the object form first, then fall back. */
+function xExtract(doc, s, e, path){
+  try { doc.extractPages({ nStart: s, nEnd: e, cPath: path }); }
+  catch (err){ doc.extractPages(s, e, path); }
+}
+function xInsert(d, afterPage, srcPath, s, e){
+  try { d.insertPages({ nPage: afterPage, cPath: srcPath, nStart: s, nEnd: e }); }
+  catch (err){ d.insertPages(afterPage, srcPath, s, e); }
+}
+function xSaveAs(d, path){
+  try { d.saveAs({ cPath: path }); }
+  catch (err){ d.saveAs(path); }
+}
+function xOpen(path){
+  try { return app.openDoc({ cPath: path }); }
+  catch (err){ return app.openDoc(path); }
+}
 function pad(n, w){ var s = String(n); while (s.length < w) s = " " + s; return s; }
 
 function pagesToRanges(pages){
@@ -591,11 +611,11 @@ function writeOneGroup(doc, g, src){
   if (!ranges.length) return false;
   var d = null, ok = false, k;
   try {
-    doc.extractPages({ nStart: ranges[0].s, nEnd: ranges[0].e, cPath: g.file });
+    xExtract(doc, ranges[0].s, ranges[0].e, g.file);
     if (ranges.length > 1){
-      d = app.openDoc({ cPath: g.file });
-      for (k = 1; k < ranges.length; k++) d.insertPages({ nPage: d.numPages - 1, cPath: src, nStart: ranges[k].s, nEnd: ranges[k].e });
-      d.saveAs({ cPath: g.file });
+      d = xOpen(g.file);
+      for (k = 1; k < ranges.length; k++) xInsert(d, d.numPages - 1, src, ranges[k].s, ranges[k].e);
+      xSaveAs(d, g.file);
     }
     ok = true;
   } catch (e){ P("  FAILED " + g.displayName + " : " + e.toString()); ok = false; }
@@ -622,14 +642,14 @@ function writeCombined(doc, groups, folder, src){
   if (!ranges.length){ P("Combined: nothing to write."); return; }
   P("Writing combined sorted file: " + outPath);
   try {
-    doc.extractPages({ nStart: ranges[0].s, nEnd: ranges[0].e, cPath: outPath });
-    cdoc = app.openDoc({ cPath: outPath });
+    xExtract(doc, ranges[0].s, ranges[0].e, outPath);
+    cdoc = xOpen(outPath);
     for (i = 1; i < ranges.length; i++){
-      try { cdoc.insertPages({ nPage: cdoc.numPages - 1, cPath: src, nStart: ranges[i].s, nEnd: ranges[i].e }); }
+      try { xInsert(cdoc, cdoc.numPages - 1, src, ranges[i].s, ranges[i].e); }
       catch (e){ bad++; P("  combined: skipped range p." + (ranges[i].s + 1) + "-" + (ranges[i].e + 1) + " : " + e.toString()); }
       if (i % 50 === 0) P("  ...merged " + i + " / " + ranges.length + " runs");
     }
-    cdoc.saveAs({ cPath: outPath });
+    xSaveAs(cdoc, outPath);
     P("  combined file done (" + (ranges.length - bad) + " of " + ranges.length + " runs" + (bad ? (", " + bad + " SKIPPED — see above") : "") + ").");
   } catch (e){ P("  *** combined file FAILED: " + e.toString()); }
   finally { if (cdoc){ try { cdoc.closeDoc(true); } catch (e2) {} } }
@@ -640,11 +660,11 @@ function writeRangesFile(doc, pages, outPath, src, label){
   if (samePath(outPath, src)){ P(label + " SKIPPED (would overwrite source)."); return; }
   var ranges = pagesToRanges(pages), i, d = null;
   try {
-    doc.extractPages({ nStart: ranges[0].s, nEnd: ranges[0].e, cPath: outPath });
+    xExtract(doc, ranges[0].s, ranges[0].e, outPath);
     if (ranges.length > 1){
-      d = app.openDoc({ cPath: outPath });
-      for (i = 1; i < ranges.length; i++) d.insertPages({ nPage: d.numPages - 1, cPath: src, nStart: ranges[i].s, nEnd: ranges[i].e });
-      d.saveAs({ cPath: outPath });
+      d = xOpen(outPath);
+      for (i = 1; i < ranges.length; i++) xInsert(d, d.numPages - 1, src, ranges[i].s, ranges[i].e);
+      xSaveAs(d, outPath);
     }
     P("Wrote " + outPath + " (" + pages.length + " pages) — " + label);
   } catch (e){ P(label + " FAILED: " + e.toString()); }
@@ -672,7 +692,7 @@ function buildIndex(groups, filesWritten, failed){
 }
 
 function openByPath(path){
-  try { app.openDoc({ cPath: path }); return true; }
+  try { xOpen(path); return true; }
   catch (e){ P("  Could not open file (does it exist yet? dry runs don't write files):\n  " + path); return false; }
 }
 
@@ -874,8 +894,8 @@ function _afterSplit(){
     if (!R.cranges.length){ _afterCombine(); return; }
     P("Building the combined sorted file (" + R.cranges.length + " sections)...");
     try {
-      R.doc.extractPages({ nStart: R.cranges[0].s, nEnd: R.cranges[0].e, cPath: R.combPath });
-      R.cdoc = app.openDoc({ cPath: R.combPath });
+      xExtract(R.doc, R.cranges[0].s, R.cranges[0].e, R.combPath);
+      R.cdoc = xOpen(R.combPath);
       R.ci = 1; R.cbad = 0;
       _combineTick();
     } catch (e){ P("  *** combined file FAILED to start: " + e.toString()); if (R.cdoc){ try { R.cdoc.closeDoc(true); } catch (e2) {} } R.cdoc = null; _afterCombine(); }
@@ -886,13 +906,13 @@ function _combineTick(){
   var R = _RUN; if (!R) return;
   var end = Math.min(R.ci + COMBINE_CHUNK, R.cranges.length);
   for (; R.ci < end; R.ci++){
-    try { R.cdoc.insertPages({ nPage: R.cdoc.numPages - 1, cPath: R.src, nStart: R.cranges[R.ci].s, nEnd: R.cranges[R.ci].e }); }
+    try { xInsert(R.cdoc, R.cdoc.numPages - 1, R.src, R.cranges[R.ci].s, R.cranges[R.ci].e); }
     catch (e){ R.cbad++; }
   }
   P("  merged " + R.ci + " / " + R.cranges.length + " sections");
   if (R.ci < R.cranges.length) _next("_combineTick()", _combineTick);
   else {
-    try { R.cdoc.saveAs({ cPath: R.combPath }); P("  combined file done (" + (R.cranges.length - R.cbad) + " of " + R.cranges.length + " sections" + (R.cbad ? (", " + R.cbad + " skipped") : "") + ")."); }
+    try { xSaveAs(R.cdoc, R.combPath); P("  combined file done (" + (R.cranges.length - R.cbad) + " of " + R.cranges.length + " sections" + (R.cbad ? (", " + R.cbad + " skipped") : "") + ")."); }
     catch (e){ P("  *** combined save FAILED: " + e.toString()); }
     finally { if (R.cdoc){ try { R.cdoc.closeDoc(true); } catch (e2) {} } R.cdoc = null; }
     _afterCombine();

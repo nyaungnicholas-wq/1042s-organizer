@@ -100,6 +100,33 @@ run("async");
 console.log("\n=== SYNC fallback (no app.setTimeOut) ===");
 run("sync");
 
+console.log("\n=== POSITIONAL-ONLY ACROBAT (client build rejecting object-form args) ===");
+(function () {
+  /* simulates the Windows build that throws RangeError: Invalid argument value
+     for extractPages({...}) etc. — only classic positional signatures work */
+  function rej() { throw new Error("RangeError: Invalid argument value"); }
+  _SCAN_CACHE = null; FS = {}; Q = [];
+  global.app = {
+    openDoc: function (a) {
+      if (typeof a === "object") rej();
+      var p = a, cnt = FS[p] || 0;
+      return { numPages: cnt,
+        insertPages: function (n, sp, s, e) { if (typeof n === "object") rej(); cnt += (e - s + 1); this.numPages = cnt; FS[p] = cnt; },
+        saveAs: function (sp) { if (typeof sp === "object") rej(); FS[sp] = cnt; },
+        closeDoc: function () {} };
+    }
+  };
+  G_DOC = makeDoc();
+  G_DOC.extractPages = function (s, e, p) { if (typeof s === "object") rej(); if (p === this.path) throw new Error("overwrite!"); FS[p] = (e - s + 1); };
+  CONFIG.dryRun = false; CONFIG.mode = "both";
+  organize(); while (Q.length) FNS[Q.shift()]();
+  var per = 0, pp = 0, k;
+  for (k in FS) { var b = k.replace(/^.*\//, ""); if (b.indexOf("1042S_") === 0) { per++; pp += FS[k]; } }
+  check("[positional] all 10 recipient files written via fallback", per === 10);
+  check("[positional] no page lost", pp === TOTAL);
+  check("[positional] combined file complete", FS["/T/_ORGANIZED_1042S_sorted.pdf"] === TOTAL);
+})();
+
 console.log("\n=== SCAN CACHE (preview then real run must not re-read) ===");
 (function () {
   _SCAN_CACHE = null; FS = {}; Q = []; global.app = makeApp(false); G_DOC = makeDoc(); CONFIG.mode = "both";
