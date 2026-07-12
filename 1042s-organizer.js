@@ -41,9 +41,21 @@
               big PDF — one file per person, plus one combined sorted file.
 
    ---------------------------------------------------------------------------
-   TO FIND ONE PERSON'S FORM LATER:   type   find("their name")   and Enter.
+   TWO WAYS TO GET THE RESULT (pick one, before STEP 6):
 
-   That's it. Nothing here deletes or changes your original PDF.
+     A) SEPARATE FILES (default) — leaves your PDF untouched and writes new,
+        sorted PDFs next to it (one per person + one combined). Do nothing extra.
+
+     B) RE-SORT THIS SAME PDF IN PLACE — physically reorders the pages inside
+        the PDF you have open, no extra files. Before STEP 6, also run this line:
+              CONFIG.mode = "inplace"
+        After it finishes, use  File > Save  to keep it (or close WITHOUT saving
+        to undo — your file on disk isn't changed until you Save).
+
+   TO FIND ONE PERSON'S FORM LATER (mode A only):  type  find("their name")
+
+   In mode A nothing changes your original PDF. In mode B the change stays only
+   in the open window until YOU choose File > Save.
    =========================================================================== */
 
 var G_DOC = this;
@@ -156,6 +168,24 @@ function xOpen(path){
   catch (err){ return app.openDoc(path); }
 }
 function pad(n, w){ var s = String(n); while (s.length < w) s = " " + s; return s; }
+
+/* Given the desired final page order (a permutation of 0..n-1 by ORIGINAL index),
+   return the sequence of {from, after} movePage operations that, applied in order,
+   physically rearrange the document into that order. `after` is the page index to
+   move behind; -1 means move to the very front. Pure + fully testable. */
+function reorderPlan(order){
+  var n = order.length, cur = [], i, j, ops = [], fromPos, val;
+  for (i = 0; i < n; i++) cur.push(i);
+  for (i = 0; i < n; i++){
+    fromPos = -1;
+    for (j = i; j < n; j++){ if (cur[j] === order[i]){ fromPos = j; break; } }
+    if (fromPos < 0 || fromPos === i) continue;
+    ops.push({ from: fromPos, after: i - 1 });
+    val = cur.splice(fromPos, 1)[0];
+    cur.splice(i, 0, val);
+  }
+  return ops;
+}
 
 function pagesToRanges(pages){
   var out = [], i, s, e;
@@ -775,6 +805,7 @@ var SCAN_CHUNK = 5;       // pages read per batch (small = stays responsive, nev
 var WRITE_CHUNK = 3;      // per-recipient files written per batch
 var COMBINE_CHUNK = 25;   // page-ranges merged into the combined file per batch
 var DUPE_ROWS = 25;       // near-duplicate-name rows compared per batch
+var MOVE_CHUNK = 20;      // page moves per batch when reordering in place
 
 function _asyncAvail(){ try { return !!(app && app.setTimeOut); } catch (e){ return false; } }
 function _next(expr, fn){
@@ -850,29 +881,61 @@ function _dupeTick(){
 
 function _reportDone(){
   var R = _RUN;
-  var det = R.det, groups = R.groups;
-  verify(det, groups, R.dupes);
-  P("Output folder: " + R.folder);
-
-  var i, collide = 0;
-  for (i = 0; i < groups.length; i++) if (samePath(groups[i].file, R.src)) collide++;
-  if (samePath(R.folder + CONFIG.combinedName, R.src)) collide++;
-  if (collide) P(">>> WARNING: " + collide + " output path(s) match your source file name and will be SKIPPED to protect the original.");
+  verify(R.det, R.groups, R.dupes);
+  var inplace = (CONFIG.mode === "inplace");
 
   if (CONFIG.dryRun){
-    buildIndex(groups, false, {});
+    buildIndex(R.groups, false, {});
     P("");
-    P(">>> PREVIEW complete — NO files were written.");
-    P(">>> If it looks right: set  CONFIG.dryRun = false  then run  organize()  again.");
+    P(">>> PREVIEW complete — NOTHING has changed yet.");
+    if (inplace) P(">>> To reorder the pages INSIDE this open PDF: set  CONFIG.dryRun = false  then run  organize()  again.");
+    else P(">>> If it looks right: set  CONFIG.dryRun = false  then run  organize()  again.");
     _RUN = null;
     return;
   }
+
+  if (inplace){
+    var ord = [], gi, pi;
+    for (gi = 0; gi < R.groups.length; gi++) for (pi = 0; pi < R.groups[gi].pages.length; pi++) ord.push(R.groups[gi].pages[pi]);
+    for (pi = 0; pi < R.det.headerPages.length; pi++) ord.push(R.det.headerPages[pi]);
+    for (pi = 0; pi < R.det.reviewPages.length; pi++) ord.push(R.det.reviewPages[pi]);
+    R.ops = reorderPlan(ord);
+    R.oi = 0;
+    P("Reordering the pages inside THIS PDF (" + R.ops.length + " moves)... progress below.");
+    _moveTick();
+    return;
+  }
+
+  var i, collide = 0;
+  for (i = 0; i < R.groups.length; i++) if (samePath(R.groups[i].file, R.src)) collide++;
+  if (samePath(R.folder + CONFIG.combinedName, R.src)) collide++;
+  if (collide) P(">>> WARNING: " + collide + " output path(s) match your source file name and will be SKIPPED to protect the original.");
+  P("Output folder: " + R.folder);
 
   R.didSplit = (CONFIG.mode === "split" || CONFIG.mode === "both");
   R.failed = {};
   R.gi = 0;
   if (R.didSplit){ P("Saving one PDF per recipient..."); _writeTick(); }
   else _afterSplit();
+}
+
+function _moveTick(){
+  var R = _RUN; if (!R) return;
+  var end = Math.min(R.oi + MOVE_CHUNK, R.ops.length), op;
+  for (; R.oi < end; R.oi++){
+    op = R.ops[R.oi];
+    try { R.doc.movePage(op.from, op.after); } catch (e) {}
+  }
+  if (R.oi % 100 === 0 || R.oi === R.ops.length) P("  moved " + R.oi + " / " + R.ops.length + " pages");
+  if (R.oi < R.ops.length) _next("_moveTick()", _moveTick);
+  else {
+    _SCAN_CACHE = null;   // pages physically moved — the old scan no longer matches
+    P("");
+    P(">>> DONE — the pages in THIS open PDF are now sorted (grouped by name, A to Z, each form with its instruction page).");
+    P(">>> Review it, then use  File > Save  to keep the new order.");
+    P(">>> To UNDO: close the file WITHOUT saving (or File > Revert). Your file on disk is unchanged until you Save.");
+    _RUN = null;
+  }
 }
 
 function _writeTick(){

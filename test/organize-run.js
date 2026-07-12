@@ -12,7 +12,7 @@ if (!console.println) console.println = function () {};
 var FS, WLOG, Q;                                  // virtual file system, write log, setTimeout queue
 global.app = null;                                // set per-mode below
 eval(fs.readFileSync(path.join(__dirname, "..", "1042s-organizer.js"), "utf8"));
-var FNS = { "_scanTick()": _scanTick, "_writeTick()": _writeTick, "_combineTick()": _combineTick, "_dupeTick()": _dupeTick };
+var FNS = { "_scanTick()": _scanTick, "_writeTick()": _writeTick, "_combineTick()": _combineTick, "_dupeTick()": _dupeTick, "_moveTick()": _moveTick };
 
 /* ---- synthetic 1042-S pages ---- */
 function quad(w) { return [[w.x0, w.y0, w.x1, w.y0, w.x1, w.y1, w.x0, w.y1]]; }
@@ -99,6 +99,49 @@ console.log("=== ASYNC mode (chunked via app.setTimeOut) ===");
 run("async");
 console.log("\n=== SYNC fallback (no app.setTimeOut) ===");
 run("sync");
+
+console.log("\n=== REORDER PLAN (movePage sequence) fuzz ===");
+(function () {
+  function applyMoves(n, ops) {                 // simulate Acrobat movePage(from, after)
+    var a = []; for (var i = 0; i < n; i++) a.push(i);
+    for (var k = 0; k < ops.length; k++) { var v = a.splice(ops[k].from, 1)[0]; a.splice(ops[k].after + 1, 0, v); }
+    return a;
+  }
+  function rng(seed) { var s = seed >>> 0; return function () { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; }; }
+  var ok = true, worst = null;
+  for (var t = 1; t <= 300; t++) {
+    var r = rng(t), n = 2 + Math.floor(r() * 60), target = [];
+    for (var i = 0; i < n; i++) target.push(i);
+    for (i = n - 1; i > 0; i--) { var j = Math.floor(r() * (i + 1)), tmp = target[i]; target[i] = target[j]; target[j] = tmp; }  // shuffle
+    var result = applyMoves(n, reorderPlan(target));
+    if (result.join(",") !== target.join(",")) { ok = false; if (!worst) worst = { t: t, target: target, result: result }; }
+  }
+  if (worst) console.log("  FAILED seed " + worst.t + " target=" + worst.target + " got=" + worst.result);
+  check("reorderPlan reproduces every one of 300 random target orders", ok);
+})();
+
+console.log("\n=== IN-PLACE MODE (reorder the open PDF itself, write no files) ===");
+(function () {
+  _SCAN_CACHE = null; FS = {}; Q = [];
+  var pageOrder = []; for (var i = 0; i < PAGES.length; i++) pageOrder.push(i);   // doc's live page sequence (original ids)
+  global.app = { openDoc: function () { throw new Error("should not open/write in inplace mode"); } };
+  G_DOC = makeDoc();
+  G_DOC.extractPages = function () { throw new Error("should not write files in inplace mode"); };
+  G_DOC.movePage = function (from, after) { var v = pageOrder.splice(from, 1)[0]; pageOrder.splice(after + 1, 0, v); };
+  CONFIG.mode = "inplace"; CONFIG.dryRun = false;
+  organize(); while (Q.length) FNS[Q.shift()]();
+
+  var uniq = {}; for (i = 0; i < SEQ.length; i++) uniq[SEQ[i]] = 1;
+  var sortedNames = Object.keys(uniq).sort(), expected = [];
+  for (i = 0; i < sortedNames.length; i++) for (var s2 = 0; s2 < SEQ.length; s2++) if (SEQ[s2] === sortedNames[i]) { expected.push(2 * s2); expected.push(2 * s2 + 1); }
+  check("in-place: open PDF's physical page order becomes alphabetical", pageOrder.join(",") === expected.join(","));
+  check("in-place: no page lost (still all pages)", pageOrder.length === PAGES.length);
+  check("in-place: wrote NO output files", Object.keys(FS).length === 0);
+  check("in-place: scan cache cleared after moving pages", _SCAN_CACHE === null);
+  var pairedOk = true; for (i = 0; i < pageOrder.length; i += 2) if (pageOrder[i + 1] !== pageOrder[i] + 1 || pageOrder[i] % 2 !== 0) pairedOk = false;
+  check("in-place: every form page still followed by its instruction", pairedOk);
+  CONFIG.mode = "both";
+})();
 
 console.log("\n=== PHYSICAL PAGE ORDER (combined file must be truly re-sorted) ===");
 (function () {
