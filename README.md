@@ -1,19 +1,33 @@
-# 1042-S Organizer — for Adobe Acrobat
+# 📄 1042-S Organizer for Adobe Acrobat
 
-## ▶ Use it in 30 seconds (copy-paste, one file)
+**Takes a messy multi-recipient IRS 1042-S PDF and organizes it — sorts every form by the
+recipient's name and keeps each form together with its instruction page.**
 
-Everything is in **one self-contained file** — nothing to install.
+<br>
 
-1. **Open the script → [`1042s-organizer.js`](1042s-organizer.js)**, then click GitHub's
-   **"Copy raw file"** button (top-right of the file box) to copy the whole thing.
-   *(Direct raw link: https://raw.githubusercontent.com/nyaungnicholas-wq/1042s-organizer/main/1042s-organizer.js — Select-All, Copy.)*
-2. In **Adobe Acrobat Pro**, press **Cmd+J** (Mac) / **Ctrl+J** (Windows) to open the JavaScript Console.
-3. **Paste**, select all, press **Ctrl+Enter** to run it. Then type `organize()`.
+## 👉 The ONE file you copy: **[`1042s-organizer.js`](1042s-organizer.js)**
 
-That's it. The `demo/`, `test/`, and `research/` folders are extras for proof and developers — you
-never need them to use the tool. Full step-by-step and calibration guide is below.
+> Everything else in this repo (the `demo`, `test`, `research` folders) is just proof that it
+> works. **You can ignore all of it.** You only ever copy that one file.
+
+### How to use it — 3 steps
+
+**1.** Click **[`1042s-organizer.js`](1042s-organizer.js)** above, then click the **“Copy raw file”**
+button (the little clipboard icon at the top-right of the code box). That copies the whole thing.
+
+**2.** Open **Adobe Acrobat Pro**, then press **Ctrl + J** (Windows) or **⌘ + J** (Mac) to open the
+**JavaScript Console** (the black box at the bottom).
+
+**3.** **Paste** it into that box, select it all, and press **Ctrl + Enter**. Then type `organize()`
+and press **Ctrl + Enter** again.
+
+Done — it organizes your open PDF. Full walkthrough (and how to double-check it first) is farther down.
+
+<br>
 
 ---
+
+## What it does
 
 Splits and organizes a big multi-recipient **IRS Form 1042-S** PDF by the recipient's
 name in **Box 13a**. It:
