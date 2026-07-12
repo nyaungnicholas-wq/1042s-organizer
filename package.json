@@ -5,7 +5,7 @@
   "keywords": ["1042-S", "irs", "tax", "acrobat", "pdf", "javascript", "withholding", "split-pdf"],
   "license": "MIT",
   "scripts": {
-    "test": "node test/mock-run.js && node test/stress-run.js && node test/random-run.js && node test/multiform-run.js",
+    "test": "node test/mock-run.js && node test/stress-run.js && node test/random-run.js && node test/multiform-run.js && node test/organize-run.js",
     "demo": "node demo/run-demo.js"
   },
   "files": [

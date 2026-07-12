@@ -358,39 +358,50 @@ function readPage(doc, p){
   return { page: p, form: form, formType: f.type, annual: !!f.annual, name: name, alt: alt, agree: agree, nWords: words.length };
 }
 
-function detectSegments(doc){
-  var n = doc.numPages;
-  var segments = [], perPage = [], headerPages = [], reviewPages = [], rotatedPages = [];
-  var current = null, suspended = false, p, info, rot;
+function newScanState(n){
+  return { segments: [], perPage: [], headerPages: [], reviewPages: [], rotatedPages: [],
+           current: null, suspended: false, numPages: n };
+}
 
-  for (p = 0; p < n; p++){
-    try { rot = doc.getPageRotation(p); if (rot && rot !== 0) rotatedPages.push(p); } catch (e) {}
-    info = readPage(doc, p);
-    perPage.push(info);
-
-    if (info.form && info.name !== ""){
-      suspended = false;
-      var ph = isPlaceholderName(info.name);
-      if (current === null || ph || current.placeholder || normTok(info.name) !== normTok(current.name)){
-        current = { name: info.name, placeholder: ph, pages: [p] };
-        segments.push(current);
-      } else {
-        current.pages.push(p);
-      }
-    } else if (info.form && info.name === ""){
-      info.flag = "FORM_NO_NAME";
-      suspended = true;
-      reviewPages.push(p);
+/* process exactly one page into the scan state (shared by the synchronous
+   detectSegments and the chunked, non-freezing runner used in Acrobat) */
+function scanStep(doc, S, p){
+  var rot, info;
+  try { rot = doc.getPageRotation(p); if (rot && rot !== 0) S.rotatedPages.push(p); } catch (e) {}
+  info = readPage(doc, p);
+  S.perPage.push(info);
+  if (info.form && info.name !== ""){
+    S.suspended = false;
+    var ph = isPlaceholderName(info.name);
+    if (S.current === null || ph || S.current.placeholder || normTok(info.name) !== normTok(S.current.name)){
+      S.current = { name: info.name, placeholder: ph, pages: [p] };
+      S.segments.push(S.current);
     } else {
-      if (suspended) reviewPages.push(p);
-      else if (current) current.pages.push(p);
-      else headerPages.push(p);
+      S.current.pages.push(p);
     }
+  } else if (info.form && info.name === ""){
+    info.flag = "FORM_NO_NAME";
+    S.suspended = true;
+    S.reviewPages.push(p);
+  } else {
+    if (S.suspended) S.reviewPages.push(p);
+    else if (S.current) S.current.pages.push(p);
+    else S.headerPages.push(p);
+  }
+}
 
+function scanResult(S){
+  return { segments: S.segments, perPage: S.perPage, headerPages: S.headerPages,
+           reviewPages: S.reviewPages, rotatedPages: S.rotatedPages, numPages: S.numPages };
+}
+
+function detectSegments(doc){
+  var n = doc.numPages, S = newScanState(n), p;
+  for (p = 0; p < n; p++){
+    scanStep(doc, S, p);
     if ((p + 1) % 100 === 0) P("  ...scanned " + (p + 1) + " / " + n + " pages");
   }
-  return { segments: segments, perPage: perPage, headerPages: headerPages,
-           reviewPages: reviewPages, rotatedPages: rotatedPages, numPages: n };
+  return scanResult(S);
 }
 
 function groupByRecipient(segments){
@@ -525,26 +536,32 @@ function verify(det, groups){
 }
 function firstFew(arr, k){ var out = [], i; for (i = 0; i < arr.length && i < k; i++) out.push(arr[i] + 1); return out.join(", ") + (arr.length > k ? ", ..." : ""); }
 
+/* write ONE recipient's PDF; returns true on success. Shared by the synchronous
+   writeSplit (tested) and the chunked runner (Acrobat). */
+function writeOneGroup(doc, g, src){
+  if (samePath(g.file, src)){ P("  SKIP (would overwrite source): " + g.file); return false; }
+  var ranges = pagesToRanges(g.pages);
+  if (!ranges.length) return false;
+  var d = null, ok = false, k;
+  try {
+    doc.extractPages({ nStart: ranges[0].s, nEnd: ranges[0].e, cPath: g.file });
+    if (ranges.length > 1){
+      d = app.openDoc({ cPath: g.file });
+      for (k = 1; k < ranges.length; k++) d.insertPages({ nPage: d.numPages - 1, cPath: src, nStart: ranges[k].s, nEnd: ranges[k].e });
+      d.saveAs({ cPath: g.file });
+    }
+    ok = true;
+  } catch (e){ P("  FAILED " + g.displayName + " : " + e.toString()); ok = false; }
+  finally { if (d){ try { d.closeDoc(true); } catch (e2) {} } }
+  return ok;
+}
+
 function writeSplit(doc, groups, src){
-  var made = 0, failed = {}, i, k, g, ranges, d;
+  var made = 0, failed = {}, i;
   P("Writing per-recipient files...");
   for (i = 0; i < groups.length; i++){
-    g = groups[i];
-    if (samePath(g.file, src)){ P("  SKIP (would overwrite source): " + g.file); failed[g.key] = 1; continue; }
-    ranges = pagesToRanges(g.pages);
-    if (!ranges.length){ failed[g.key] = 1; continue; }
-    d = null;
-    try {
-      doc.extractPages({ nStart: ranges[0].s, nEnd: ranges[0].e, cPath: g.file });
-      if (ranges.length > 1){
-        d = app.openDoc({ cPath: g.file });
-        for (k = 1; k < ranges.length; k++) d.insertPages({ nPage: d.numPages - 1, cPath: src, nStart: ranges[k].s, nEnd: ranges[k].e });
-        d.saveAs({ cPath: g.file });
-      }
-      made++;
-      if (made % 25 === 0) P("  ...wrote " + made + " files");
-    } catch (e){ failed[g.key] = 1; P("  FAILED " + g.displayName + " : " + e.toString()); }
-    finally { if (d){ try { d.closeDoc(true); } catch (e2) {} } }
+    if (writeOneGroup(doc, groups[i], src)){ made++; if (made % 25 === 0) P("  ...wrote " + made + " files"); }
+    else failed[groups[i].key] = 1;
   }
   P("  per-recipient files written: " + made);
   return failed;
@@ -678,56 +695,142 @@ function rebuildIndex(){
   buildIndex(groups, false, {});
 }
 
+/* ---------------------------------------------------------------------------
+   organize() runs in small CHUNKS that yield control back to Acrobat between
+   batches (via app.setTimeOut), so a 1,000+ page file never freezes / shows
+   "not responding". If app.setTimeOut isn't available it falls back to running
+   straight through, so it is never worse than a plain synchronous run.
+   State lives in the global _RUN so it survives across the scheduled callbacks.
+   --------------------------------------------------------------------------- */
+var _RUN = null;
+var SCAN_CHUNK = 10;      // pages read per batch (small = stays responsive, never "not responding")
+var WRITE_CHUNK = 3;      // per-recipient files written per batch
+var COMBINE_CHUNK = 25;   // page-ranges merged into the combined file per batch
+
+function _asyncAvail(){ try { return !!(app && app.setTimeOut); } catch (e){ return false; } }
+function _next(expr, fn){
+  if (_RUN && _RUN.async){ try { _RUN.timer = app.setTimeOut(expr, 1); return; } catch (e){} }
+  fn();
+}
+
 function organize(){
   var doc = G_DOC;
-  if (!doc || !doc.numPages){ P("ERROR: no active PDF. Open your 1042-S PDF, make it the front window, then re-paste this script."); return; }
-  if (!doc.path){ P("ERROR: this PDF isn't saved to disk. Do File > Save first so the tool knows where to write, then re-run."); return; }
+  if (!doc || !doc.numPages){ P("ERROR: no active PDF. Open your PDF, make it the front window, then re-paste this script."); return; }
+  if (!doc.path){ P("ERROR: this PDF isn't saved to disk. Do File > Save first, then run organize() again."); return; }
 
   P("========================================================");
-  P("  1042-S ORGANIZER (v2)");
+  P("  1042-S ORGANIZER");
   P("  Pages: " + doc.numPages + "   dryRun=" + CONFIG.dryRun + "   mode=" + CONFIG.mode);
   P("========================================================");
 
-  P("Scanning pages for Box 13a...");
-  var det = detectSegments(doc);
+  _RUN = {
+    doc: doc, src: doc.path, n: doc.numPages, p: 0,
+    S: newScanState(doc.numPages),
+    folder: (CONFIG.outputFolder && CONFIG.outputFolder.length) ? ensureSlash(CONFIG.outputFolder) : folderOf(doc.path),
+    async: _asyncAvail()
+  };
+  P("Reading " + _RUN.n + " pages... progress shows below. Acrobat stays usable — please DON'T force-quit.");
+  _scanTick();
+}
+
+function _scanTick(){
+  var R = _RUN; if (!R) return;
+  var end = Math.min(R.p + SCAN_CHUNK, R.n);
+  for (; R.p < end; R.p++) scanStep(R.doc, R.S, R.p);
+  if (R.p % 100 === 0 || R.p === R.n) P("  read " + R.p + " / " + R.n + " pages");
+  if (R.p < R.n) _next("_scanTick()", _scanTick);
+  else _scanDone();
+}
+
+function _scanDone(){
+  var R = _RUN;
+  var det = scanResult(R.S);
   var groups = groupByRecipient(det.segments);
-
-  var folder = (CONFIG.outputFolder && CONFIG.outputFolder.length) ? ensureSlash(CONFIG.outputFolder) : folderOf(doc.path);
-  assignFilenames(groups, folder);
-
+  assignFilenames(groups, R.folder);
   verify(det, groups);
-  P("Output folder: " + folder);
+  P("Output folder: " + R.folder);
 
-  var src = doc.path, i, collide = 0;
-  for (i = 0; i < groups.length; i++) if (samePath(groups[i].file, src)) collide++;
-  if (samePath(folder + CONFIG.combinedName, src)) collide++;
-  if (collide){ P(">>> WARNING: " + collide + " output path(s) collide with your source file name and will be SKIPPED to protect the original. Change CONFIG.filePrefix or CONFIG.outputFolder to write them."); }
+  var i, collide = 0;
+  for (i = 0; i < groups.length; i++) if (samePath(groups[i].file, R.src)) collide++;
+  if (samePath(R.folder + CONFIG.combinedName, R.src)) collide++;
+  if (collide) P(">>> WARNING: " + collide + " output path(s) match your source file name and will be SKIPPED to protect the original.");
+
+  R.det = det; R.groups = groups;
 
   if (CONFIG.dryRun){
     buildIndex(groups, false, {});
     P("");
-    P(">>> DRY RUN complete — NO files were written.");
-    P(">>> If the report looks right, set  CONFIG.dryRun = false  and run  organize()  again.");
+    P(">>> PREVIEW complete — NO files were written.");
+    P(">>> If it looks right: set  CONFIG.dryRun = false  then run  organize()  again.");
+    _RUN = null;
     return;
   }
 
-  var didSplit = (CONFIG.mode === "split" || CONFIG.mode === "both");
-  var failed = {};
-  if (didSplit) failed = writeSplit(doc, groups, src);
-  if (CONFIG.mode === "combine" || CONFIG.mode === "both") writeCombined(doc, groups, folder, src);
-  writeRangesFile(doc, det.headerPages, folder + "_REVIEW_unmatched_head.pdf", src, "pages before the first named form");
-  writeRangesFile(doc, det.reviewPages, folder + "_REVIEW_unreadable_forms.pdf", src, "unreadable/uncertain form pages");
+  R.didSplit = (CONFIG.mode === "split" || CONFIG.mode === "both");
+  R.failed = {};
+  R.gi = 0;
+  if (R.didSplit){ P("Saving one PDF per recipient..."); _writeTick(); }
+  else _afterSplit();
+}
 
-  buildIndex(groups, didSplit, failed);
+function _writeTick(){
+  var R = _RUN; if (!R) return;
+  var end = Math.min(R.gi + WRITE_CHUNK, R.groups.length);
+  for (; R.gi < end; R.gi++){ if (!writeOneGroup(R.doc, R.groups[R.gi], R.src)) R.failed[R.groups[R.gi].key] = 1; }
+  if (R.gi % 25 === 0 || R.gi === R.groups.length) P("  saved " + R.gi + " / " + R.groups.length + " recipient files");
+  if (R.gi < R.groups.length) _next("_writeTick()", _writeTick);
+  else _afterSplit();
+}
 
-  var nFailed = 0, k; for (k in failed) if (failed.hasOwnProperty(k)) nFailed++;
+function _afterSplit(){
+  var R = _RUN;
+  if (CONFIG.mode === "combine" || CONFIG.mode === "both"){
+    R.combPath = R.folder + CONFIG.combinedName;
+    if (samePath(R.combPath, R.src)){ P("Combined SKIPPED (would overwrite source)."); _afterCombine(); return; }
+    R.cranges = []; var i, k, gr;
+    for (i = 0; i < R.groups.length; i++){ gr = pagesToRanges(R.groups[i].pages); for (k = 0; k < gr.length; k++) R.cranges.push(gr[k]); }
+    if (!R.cranges.length){ _afterCombine(); return; }
+    P("Building the combined sorted file (" + R.cranges.length + " sections)...");
+    try {
+      R.doc.extractPages({ nStart: R.cranges[0].s, nEnd: R.cranges[0].e, cPath: R.combPath });
+      R.cdoc = app.openDoc({ cPath: R.combPath });
+      R.ci = 1; R.cbad = 0;
+      _combineTick();
+    } catch (e){ P("  *** combined file FAILED to start: " + e.toString()); if (R.cdoc){ try { R.cdoc.closeDoc(true); } catch (e2) {} } R.cdoc = null; _afterCombine(); }
+  } else _afterCombine();
+}
+
+function _combineTick(){
+  var R = _RUN; if (!R) return;
+  var end = Math.min(R.ci + COMBINE_CHUNK, R.cranges.length);
+  for (; R.ci < end; R.ci++){
+    try { R.cdoc.insertPages({ nPage: R.cdoc.numPages - 1, cPath: R.src, nStart: R.cranges[R.ci].s, nEnd: R.cranges[R.ci].e }); }
+    catch (e){ R.cbad++; }
+  }
+  P("  merged " + R.ci + " / " + R.cranges.length + " sections");
+  if (R.ci < R.cranges.length) _next("_combineTick()", _combineTick);
+  else {
+    try { R.cdoc.saveAs({ cPath: R.combPath }); P("  combined file done (" + (R.cranges.length - R.cbad) + " of " + R.cranges.length + " sections" + (R.cbad ? (", " + R.cbad + " skipped") : "") + ")."); }
+    catch (e){ P("  *** combined save FAILED: " + e.toString()); }
+    finally { if (R.cdoc){ try { R.cdoc.closeDoc(true); } catch (e2) {} } R.cdoc = null; }
+    _afterCombine();
+  }
+}
+
+function _afterCombine(){
+  var R = _RUN;
+  writeRangesFile(R.doc, R.det.headerPages, R.folder + "_REVIEW_unmatched_head.pdf", R.src, "pages before the first named form");
+  writeRangesFile(R.doc, R.det.reviewPages, R.folder + "_REVIEW_unreadable_forms.pdf", R.src, "unreadable/uncertain form pages");
+  buildIndex(R.groups, R.didSplit, R.failed);
+
+  var nFailed = 0, k; for (k in R.failed) if (R.failed.hasOwnProperty(k)) nFailed++;
   P("");
   P(">>> DONE.");
-  if (didSplit) P(">>> Recipients: " + groups.length + "   Per-recipient files written: " + (groups.length - nFailed) + (nFailed ? ("   FAILED/SKIPPED: " + nFailed) : ""));
-  else P(">>> Recipients: " + groups.length + "   (combine-only mode: wrote just the combined file, no per-recipient files)");
-  if (CONFIG.mode === "combine" || CONFIG.mode === "both") P(">>> Combined file: " + folder + CONFIG.combinedName);
-  if (didSplit) P(">>> Retrieve a recipient's form with:  find(\"name\")   Manifest: exportIndexCSV()");
-  else P(">>> (Per-recipient retrieval via find() needs CONFIG.mode = \"split\" or \"both\".)");
+  if (R.didSplit) P(">>> Recipients: " + R.groups.length + "   Per-recipient files written: " + (R.groups.length - nFailed) + (nFailed ? ("   FAILED/SKIPPED: " + nFailed) : ""));
+  else P(">>> Recipients: " + R.groups.length + "   (combine-only mode: wrote just the combined file, no per-recipient files)");
+  if (CONFIG.mode === "combine" || CONFIG.mode === "both") P(">>> Combined file: " + R.folder + CONFIG.combinedName);
+  if (R.didSplit) P(">>> Retrieve a recipient's form with:  find(\"name\")   Manifest: exportIndexCSV()");
+  _RUN = null;
 }
 
 function testName(humanPage){
