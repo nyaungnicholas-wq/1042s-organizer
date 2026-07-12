@@ -172,25 +172,26 @@ function samePath(a, b){
 /* Some Acrobat builds reject the object-literal call form for the page/file
    methods with "RangeError: Invalid argument value" and only accept the
    classic positional signatures. Try the object form first, then fall back. */
+/* POSITIONAL form first — proven to work on the client's Acrobat build, which
+   rejects the object-literal form with "RangeError: Invalid argument value". */
 function xExtract(doc, s, e, path){
-  try { doc.extractPages({ nStart: s, nEnd: e, cPath: path }); return; } catch (e1) {}
-  try { doc.extractPages(s, e, path); return; } catch (e2) {}
-  /* last resort: extract to a new window, save that, close it */
+  try { doc.extractPages(s, e, path); return; } catch (e1) {}
+  try { doc.extractPages({ nStart: s, nEnd: e, cPath: path }); return; } catch (e2) {}
   var nd = doc.extractPages(s, e);
   if (!nd) throw new Error("extractPages refused (document security may forbid page extraction)");
   try { xSaveAs(nd, path); } finally { try { nd.closeDoc(true); } catch (e3) {} }
 }
 function xInsert(d, afterPage, srcPath, s, e){
-  try { d.insertPages({ nPage: afterPage, cPath: srcPath, nStart: s, nEnd: e }); }
-  catch (err){ d.insertPages(afterPage, srcPath, s, e); }
+  try { d.insertPages(afterPage, srcPath, s, e); }
+  catch (err){ d.insertPages({ nPage: afterPage, cPath: srcPath, nStart: s, nEnd: e }); }
 }
 function xSaveAs(d, path){
-  try { d.saveAs({ cPath: path }); }
-  catch (err){ d.saveAs(path); }
+  try { d.saveAs(path); }
+  catch (err){ d.saveAs({ cPath: path }); }
 }
 function xOpen(path){
-  try { return app.openDoc({ cPath: path }); }
-  catch (err){ return app.openDoc(path); }
+  try { return app.openDoc(path); }
+  catch (err){ return app.openDoc({ cPath: path }); }
 }
 function pad(n, w){ var s = String(n); while (s.length < w) s = " " + s; return s; }
 

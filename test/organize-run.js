@@ -41,6 +41,10 @@ for (var s = 0; s < SEQ.length; s++) { PAGES.push(formPage(SEQ[s])); NAMEOF.push
 var TOTAL = PAGES.length;   // 30
 
 var READS = 0;
+/* accept BOTH the positional and object call forms, like real Acrobat */
+function EA(a, b, c) { return (typeof a === "object") ? a : { nStart: a, nEnd: b, cPath: c }; }
+function IA(a, b, c, d) { return (typeof a === "object") ? a : { nPage: a, cPath: b, nStart: c, nEnd: d }; }
+function PATHOF(a) { return (typeof a === "object") ? a.cPath : a; }
 function makeDoc() {
   return {
     numPages: PAGES.length, path: "/T/source.pdf",
@@ -49,16 +53,16 @@ function makeDoc() {
     getPageNthWordQuads: function (p, i) { return quad(PAGES[p][i]); },
     getPageBox: function () { return [0, 792, 612, 0]; },
     getPageRotation: function () { return 0; },
-    extractPages: function (o) { if (o.cPath === this.path) throw new Error("refuse overwrite source"); FS[o.cPath] = (o.nEnd - o.nStart + 1); WLOG.push(o.cPath); }
+    extractPages: function (a, b, c) { var o = EA(a, b, c); if (o.cPath === this.path) throw new Error("refuse overwrite source"); FS[o.cPath] = (o.nEnd - o.nStart + 1); WLOG.push(o.cPath); }
   };
 }
 function makeApp(withTimeout) {
   var a = {
-    openDoc: function (o) {
-      var p = o.cPath, cnt = FS[p] || 0;
+    openDoc: function (x) {
+      var p = PATHOF(x), cnt = FS[p] || 0;
       return { numPages: cnt,
-        insertPages: function (io) { cnt += (io.nEnd - io.nStart + 1); this.numPages = cnt; FS[p] = cnt; },
-        saveAs: function (so) { FS[so.cPath] = cnt; },
+        insertPages: function (ia, ib, ic, id) { var io = IA(ia, ib, ic, id); cnt += (io.nEnd - io.nStart + 1); this.numPages = cnt; FS[p] = cnt; },
+        saveAs: function (so) { FS[PATHOF(so)] = cnt; },
         closeDoc: function () {} };
     }
   };
@@ -150,16 +154,16 @@ console.log("\n=== PHYSICAL PAGE ORDER (combined file must be truly re-sorted) =
   _SCAN_CACHE = null; FS = {}; Q = [];
   function put(path, s, e) { if (!ORD[path]) ORD[path] = []; for (var x = s; x <= e; x++) ORD[path].push(x); }
   global.app = {
-    openDoc: function (o) {
-      var p = (typeof o === "object") ? o.cPath : o;
+    openDoc: function (x) {
+      var p = PATHOF(x);
       return { numPages: (ORD[p] || []).length,
-        insertPages: function (io) { put(p, io.nStart, io.nEnd); this.numPages = ORD[p].length; FS[p] = ORD[p].length; },
-        saveAs: function (so) { var d = (typeof so === "object") ? so.cPath : so; ORD[d] = (ORD[p] || []).slice(); FS[d] = ORD[d].length; },
+        insertPages: function (ia, ib, ic, id) { var io = IA(ia, ib, ic, id); put(p, io.nStart, io.nEnd); this.numPages = ORD[p].length; FS[p] = ORD[p].length; },
+        saveAs: function (so) { var d = PATHOF(so); ORD[d] = (ORD[p] || []).slice(); FS[d] = ORD[d].length; },
         closeDoc: function () {} };
     }
   };
   G_DOC = makeDoc();
-  G_DOC.extractPages = function (o) { ORD[o.cPath] = []; put(o.cPath, o.nStart, o.nEnd); FS[o.cPath] = ORD[o.cPath].length; };
+  G_DOC.extractPages = function (a, b, c) { var o = EA(a, b, c); ORD[o.cPath] = []; put(o.cPath, o.nStart, o.nEnd); FS[o.cPath] = ORD[o.cPath].length; };
   CONFIG.dryRun = false; CONFIG.mode = "both";
   organize(); while (Q.length) FNS[Q.shift()]();
 
