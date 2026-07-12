@@ -1,6 +1,11 @@
 /* ===========================================================================
 
      ORGANIZE 1042-S TAX FORMS  —  paste this whole file into Adobe Acrobat
+     (v3 — includes a probe() self-test for "files won't save" problems)
+
+   ⚠ IF ORGANIZE DIDN'T SAVE ANY FILES:  after pasting (STEP 4), type  probe()
+     and press Ctrl+Enter. It tells you in 2 seconds whether the problem is the
+     folder, the filenames, or the PDF's security — then send me that result.
 
    ---------------------------------------------------------------------------
    WHAT THIS DOES
@@ -1080,9 +1085,36 @@ function dumpWords(humanPage){
   }
 }
 
-P("1042-S Organizer (v2) loaded.");
-P("Calibrate:  testName(1)   identifyForm_page(1)   scan(1,20)   dumpWords(1)");
-P("Multi-form: handles 1042-S + 1099 + W-2 + 1042. Tune FORM_CONFIG labels with your samples.");
-P("Run:        organize()      (dry run first; then set CONFIG.dryRun=false)");
-P("Retrieve:   find(\"name\")   openForm(\"Exact Name\")");
-P("Manifest:   exportIndexCSV()   (a spreadsheet of recipient -> file -> pages)");
+/* WRITE PROBE — if organize() fails to save files, run  probe()  to find out WHY.
+   It tries writing a 1-page test file to your folder (clean name + a name with
+   spaces) and tells you plainly whether it's the folder, the filenames, or the
+   PDF's security. No hand-typed paths needed. */
+function probe(){
+  var d = G_DOC;
+  if (!d || !d.numPages){ P("Open your PDF and make it the front window first."); return; }
+  if (!d.path){ P("Save the PDF to disk first (File > Save), then run probe()."); return; }
+  try { console.clear(); } catch (e) {}
+  P("=================== WRITE PROBE ===================");
+  try { P("PDF secured?  " + d.securityHandler); } catch (e) { P("PDF secured?  (unknown)"); }
+  var folder = folderOf(d.path);
+  P("Folder:       " + folder);
+  function t(label, path){
+    try { xExtract(d, 0, 0, path); P(label + ": OK"); return true; }
+    catch (e){ P(label + ": FAILED  ->  " + e.toString()); return false; }
+  }
+  var a = t("clean filename ", folder + "_probe1.pdf");
+  var b = t("filename w/space", folder + "_probe with spaces.pdf");
+  P("------------------- VERDICT -------------------");
+  if (a && b) P("Writing WORKS here. organize() should save files. If it still fails, send me the console.");
+  else if (a && !b) P("It's the SPACES in recipient names. Tell me and I'll switch output names to underscores.");
+  else if (String(d.securityHandler) !== "null" && String(d.securityHandler) !== "undefined") P("The PDF is SECURED and blocking writes. Check File > Properties > Security > Page Extraction. You need the unlocked original. (Or try  CONFIG.mode = \"inplace\".)");
+  else P("Can't write to THIS folder (often OneDrive-redirected Downloads on work PCs). Move the PDF to a plain folder like  C:\\1042s\\  and run  probe()  again.");
+  P("(Delete the _probe*.pdf test files afterward.)");
+  P("==================================================");
+}
+
+P("1042-S Organizer (v3) loaded.");
+P("TROUBLE SAVING?  run:  probe()   <- tells you exactly why in 2 seconds");
+P("Calibrate:  testName(1)   scan(1,20)   dumpWords(1)");
+P("Run:        organize()      (preview first; then set CONFIG.dryRun=false)");
+P("Retrieve:   find(\"name\")   openForm(\"Exact Name\")   Manifest: exportIndexCSV()");
