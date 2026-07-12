@@ -208,6 +208,38 @@ console.log("\n=== POSITIONAL-ONLY ACROBAT (client build rejecting object-form a
   check("[positional] combined file complete", FS["/T/_ORGANIZED_1042S_sorted.pdf"] === TOTAL);
 })();
 
+console.log("\n=== SECURITY-LOCKED PDF (extraction forbidden) fails fast, before the scan ===");
+(function () {
+  _SCAN_CACHE = null; FS = {}; Q = [];
+  var reads = 0, threw = false;
+  global.app = { openDoc: function () { throw new Error("no"); } };
+  G_DOC = makeDoc();
+  G_DOC.securityHandler = "Standard";
+  G_DOC.getPageNthWord = function (p, i) { reads++; return PAGES[p][i].t; };
+  G_DOC.extractPages = function () { throw new Error("RangeError: Invalid argument value"); };  // locked: every form refused
+  CONFIG.dryRun = false; CONFIG.mode = "both";
+  try { organize(); while (Q.length) FNS[Q.shift()](); } catch (e) { threw = true; }
+  check("locked: no exception escapes", !threw);
+  check("locked: aborted BEFORE scanning any pages", reads === 0);
+  check("locked: no output files", Object.keys(FS).length === 0);
+  check("locked: no run left dangling", _RUN === null);
+})();
+
+console.log("\n=== IN-PLACE with movePage refused (Document Assembly locked) ===");
+(function () {
+  _SCAN_CACHE = null; FS = {}; Q = [];
+  global.app = { openDoc: function () { throw new Error("no"); } };
+  G_DOC = makeDoc();
+  var before = []; for (var i = 0; i < PAGES.length; i++) before.push(i);
+  G_DOC.movePage = function () { throw new Error("NotAllowedError: Security settings prevent this"); };
+  CONFIG.mode = "inplace"; CONFIG.dryRun = false;
+  var threw = false;
+  try { organize(); while (Q.length) FNS[Q.shift()](); } catch (e) { threw = true; }
+  check("inplace-locked: no exception escapes", !threw);
+  check("inplace-locked: run finished (reported refusals) and cleared", _RUN === null);
+  CONFIG.mode = "both";
+})();
+
 console.log("\n=== SCAN CACHE (preview then real run must not re-read) ===");
 (function () {
   _SCAN_CACHE = null; FS = {}; Q = []; global.app = makeApp(false); G_DOC = makeDoc(); CONFIG.mode = "both";

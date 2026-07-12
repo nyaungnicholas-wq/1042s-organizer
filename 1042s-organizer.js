@@ -152,8 +152,12 @@ function samePath(a, b){
    methods with "RangeError: Invalid argument value" and only accept the
    classic positional signatures. Try the object form first, then fall back. */
 function xExtract(doc, s, e, path){
-  try { doc.extractPages({ nStart: s, nEnd: e, cPath: path }); }
-  catch (err){ doc.extractPages(s, e, path); }
+  try { doc.extractPages({ nStart: s, nEnd: e, cPath: path }); return; } catch (e1) {}
+  try { doc.extractPages(s, e, path); return; } catch (e2) {}
+  /* last resort: extract to a new window, save that, close it */
+  var nd = doc.extractPages(s, e);
+  if (!nd) throw new Error("extractPages refused (document security may forbid page extraction)");
+  try { xSaveAs(nd, path); } finally { try { nd.closeDoc(true); } catch (e3) {} }
 }
 function xInsert(d, afterPage, srcPath, s, e){
   try { d.insertPages({ nPage: afterPage, cPath: srcPath, nStart: s, nEnd: e }); }
@@ -824,6 +828,36 @@ function organize(){
   P("  Pages: " + doc.numPages + "   dryRun=" + CONFIG.dryRun + "   mode=" + CONFIG.mode);
   P("========================================================");
 
+  /* the #1 real-world blocker: the PDF's own security settings */
+  var sec = null; try { sec = doc.securityHandler; } catch (eSec) {}
+  if (sec) P("NOTE: this PDF is SECURED (" + sec + "). If File > Properties > Security shows\n      'Page Extraction: Not Allowed', Acrobat will refuse to split it into files.");
+
+  /* on a real file-writing run, prove we CAN write ONE page BEFORE scanning
+     1,000+ pages — so a blocked document fails in 2 seconds with the true
+     reason instead of 108 failures after a long scan. */
+  if (!CONFIG.dryRun && CONFIG.mode !== "inplace"){
+    var tFolder = (CONFIG.outputFolder && CONFIG.outputFolder.length) ? ensureSlash(CONFIG.outputFolder) : folderOf(doc.path);
+    var tPath = tFolder + "_TEST_DELETE_ME.pdf";
+    try {
+      xExtract(doc, 0, 0, tPath);
+      P("Write self-test OK (made " + tPath + " — you can delete it).");
+    } catch (eTest){
+      P("");
+      P("*** STOPPING BEFORE THE SCAN: Acrobat refused a simple 1-page write.");
+      P("*** Error: " + eTest.toString());
+      P("*** Most common causes:");
+      P("***   1) The PDF is SECURED against page extraction.");
+      P("***      Check: File > Properties > Security tab > 'Page Extraction'.");
+      P("***      If it says 'Not Allowed', no script can split it — you need the");
+      P("***      unlocked original (or the permissions password) from whoever made it.");
+      P("***   2) Acrobat can't write to this folder — try moving the PDF to a new");
+      P("***      folder like C:\\1042s\\ and running again.");
+      P("*** ALTERNATIVE that avoids file-writing entirely: reorder THIS open PDF");
+      P("*** in place —  CONFIG.mode = \"inplace\"  then  organize()  (then File > Save).");
+      return;
+    }
+  }
+
   _RUN = {
     doc: doc, src: doc.path, n: doc.numPages, p: 0,
     S: newScanState(doc.numPages),
@@ -922,18 +956,27 @@ function _reportDone(){
 function _moveTick(){
   var R = _RUN; if (!R) return;
   var end = Math.min(R.oi + MOVE_CHUNK, R.ops.length), op;
+  if (R.mfail === undefined) R.mfail = 0;
   for (; R.oi < end; R.oi++){
     op = R.ops[R.oi];
-    try { R.doc.movePage(op.from, op.after); } catch (e) {}
+    try { R.doc.movePage(op.from, op.after); }
+    catch (e){ R.mfail++; if (R.mfail === 1) P("  *** movePage refused: " + e.toString()); }
   }
   if (R.oi % 100 === 0 || R.oi === R.ops.length) P("  moved " + R.oi + " / " + R.ops.length + " pages");
   if (R.oi < R.ops.length) _next("_moveTick()", _moveTick);
   else {
     _SCAN_CACHE = null;   // pages physically moved — the old scan no longer matches
     P("");
-    P(">>> DONE — the pages in THIS open PDF are now sorted (grouped by name, A to Z, each form with its instruction page).");
-    P(">>> Review it, then use  File > Save  to keep the new order.");
-    P(">>> To UNDO: close the file WITHOUT saving (or File > Revert). Your file on disk is unchanged until you Save.");
+    if (R.mfail){
+      P(">>> " + R.mfail + " of " + R.ops.length + " page moves were REFUSED — the PDF is probably secured");
+      P(">>> (File > Properties > Security: 'Document Assembly: Not Allowed').");
+      P(">>> Close WITHOUT saving; a partially-moved file is worse than the original.");
+      P(">>> You need the unlocked original (or the permissions password) from the issuer.");
+    } else {
+      P(">>> DONE — the pages in THIS open PDF are now sorted (grouped by name, A to Z, each form with its instruction page).");
+      P(">>> Review it, then use  File > Save  to keep the new order.");
+      P(">>> To UNDO: close the file WITHOUT saving (or File > Revert). Your file on disk is unchanged until you Save.");
+    }
     _RUN = null;
   }
 }
