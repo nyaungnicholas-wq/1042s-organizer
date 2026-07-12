@@ -46,62 +46,47 @@
    That's it. Nothing here deletes or changes your original PDF.
    =========================================================================== */
 
-var G_DOC = this;   /* captured at paste time = your active PDF */
+var G_DOC = this;
 
 var CONFIG = {
-  /* ---- the two switches you'll actually touch ---- */
-  dryRun: true,                 // true = analyze + verify only (no files). Set false to write.
-  mode: "both",                 // "split" | "combine" | "both"
 
-  /* ---- where files go ---- */
-  outputFolder: "",             // "" = same folder as the source PDF. Otherwise a full path that EXISTS.
-  filePrefix: "1042S_",         // per-recipient filename prefix (also protects the source from collision)
+  dryRun: true,
+  mode: "both",
+
+  outputFolder: "",
+  filePrefix: "1042S_",
   combinedName: "_ORGANIZED_1042S_sorted.pdf",
 
-  /* ---- detection knobs (rarely need changing) ---- */
-  crossCheck: true,             // run a 2nd independent name reader and flag disagreements
-  maxNameWords: 10,             // if the "name box" holds more words than this, treat as no-name
-  padPts: 2,                    // small padding (points) around the name box
-  rightColumnFraction: 0.62,    // fallback right edge of name box if 13b not found
-  boxHeightFraction: 0.06,      // fallback name-band height if 13c not found
-  minRowGapPts: 6,              // 13a and 13c must be at least this far apart vertically (rows)
-  maxRowGapPts: 140,            // ...but not a whole page apart (rejects prose that merely cites boxes)
-  colAlignTolPts: 45,           // 13a and 13c must sit in the same left column (rejects scattered prose)
-  labelLineTolPts: 3,           // how close (points) counts as "on the same line as a label"
+  crossCheck: true,
+  maxNameWords: 10,
+  padPts: 2,
+  rightColumnFraction: 0.62,
+  boxHeightFraction: 0.06,
+  minRowGapPts: 6,
+  maxRowGapPts: 140,
+  colAlignTolPts: 45,
+  labelLineTolPts: 3,
 
-  /* ---- review helpers ---- */
-  packetOutlierPages: 8,        // flag any single packet larger than this many pages
-  similarNameThreshold: 0.86,   // 0..1; flag recipient names this similar (possible dupes/typos)
-  nearDupeMaxNames: 1500,       // skip the (n^2) near-dupe scan above this many recipients
-  indexPrintCap: 150            // cap how many recipients are printed to the console index
+  packetOutlierPages: 8,
+  similarNameThreshold: 0.86,
+  nearDupeMaxNames: 1500,
+  indexPrintCap: 150
 };
 
-/* names that are NOT real entities — must never be merged across the document */
 var PLACEHOLDER_KEYS = { "unknownrecipient": 1, "unknown": 1, "withholdingratepool": 1, "withholdingratepoolgeneral": 1 };
 
-/* MULTI-FORM support. The PDF can contain 1042-S, 1099, W-2, and 1042 (annual) forms.
-   1042-S is precise (13a/13b/13c box). The 1099/W-2 name boxes are anchored on their
-   labels with best-effort defaults — CALIBRATE these with your sample forms by running
-   identifyForm(pageNum) and dumpWords(pageNum), then adjust the label token lists below. */
 var FORM_CONFIG = {
   enable1099: true,
   enableW2: true,
   enable1042annual: true,
-  label1099: ["recipients", "name"],                 // 1099: "RECIPIENT'S name"
-  labelW2: ["employees", "first"],                   // W-2 box e: "Employee's first name and initial"
-  label1042agent: ["name", "of", "withholding", "agent"], // 1042 annual: filer, not a recipient
-  annualGroupName: "1042 Annual Return (filer)"       // 1042 annual pages go to their own file
+  label1099: ["recipients", "name"],
+  labelW2: ["employees", "first"],
+  label1042agent: ["name", "of", "withholding", "agent"],
+  annualGroupName: "1042 Annual Return (filer)"
 };
 
-/* ---------------------------------------------------------------------
-   small utilities
-   ------------------------------------------------------------------- */
 function P(s){ try { console.println(String(s)); } catch (e) {} }
 
-/* normalize a token for matching/identity.
-   Strips ASCII control/punctuation/whitespace but KEEPS digits, a-z, and ALL
-   non-ASCII letters (CJK, Cyrillic, accented, Arabic) so foreign company names
-   keep a distinct identity. ASCII-only input yields the same result as before. */
 function normTok(t){
   if (t === null || t === undefined) return "";
   return String(t).toLowerCase().replace(/[\u0000-\u002f\u003a-\u0040\u005b-\u0060\u007b-\u007f\s]+/g, "");
@@ -119,19 +104,14 @@ function cleanName(s){
 
 function isPlaceholderName(name){ return PLACEHOLDER_KEYS[normTok(name)] === 1; }
 
-/* Turn an UNTRUSTED Box 13a value into a safe filename.
-   The recipient name comes out of the PDF, so it must not be able to escape the
-   output folder or produce a dangerous file. Strips path separators, control
-   chars (incl. NUL), collapses ".." traversal runs, neutralizes Windows reserved
-   device names (CON, PRN, AUX, NUL, COM1-9, LPT1-9). */
 function safeFilename(s){
   if (s === null || s === undefined) return "";
   s = String(s);
-  s = s.replace(/[\x00-\x1f\x7f-\x9f]/g, " ");            // C0 + DEL + C1 control chars (incl. NUL)
-  s = s.replace(/[\\\/:\*\?"<>\|]/g, " ");                // path separators + Win/Mac-illegal chars
+  s = s.replace(/[\x00-\x1f\x7f-\x9f]/g, " ");
+  s = s.replace(/[\\\/:\*\?"<>\|]/g, " ");
   s = collapse(trim(s));
   s = s.replace(/^[.\s]+|[.\s]+$/g, "");
-  s = s.replace(/\.{2,}/g, ".");                          // collapse ".." runs (traversal)
+  s = s.replace(/\.{2,}/g, ".");
   s = s.replace(/^[.\s]+|[.\s]+$/g, "");
   var stem = s.split(".")[0];
   if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(stem)) s = "_" + s;
@@ -142,9 +122,7 @@ function safeFilename(s){
 
 function folderOf(path){ return String(path).replace(/[^\/]+$/, ""); }
 function ensureSlash(p){ p = String(p); return (p.charAt(p.length - 1) === "/") ? p : (p + "/"); }
-/* canonicalize a device-independent path for the "did we hit the source?" guard:
-   NFC-normalize (so macOS composed/decomposed names compare equal), lowercase,
-   drop trailing slashes, and resolve . / .. segments. */
+
 function canonPath(p){
   p = String(p);
   if (String.prototype.normalize){ try { p = p.normalize("NFC"); } catch (e) {} }
@@ -159,7 +137,6 @@ function samePath(a, b){
 }
 function pad(n, w){ var s = String(n); while (s.length < w) s = " " + s; return s; }
 
-/* a sorted list of 0-based page indices -> array of contiguous {s,e} ranges */
 function pagesToRanges(pages){
   var out = [], i, s, e;
   if (!pages || !pages.length) return out;
@@ -172,9 +149,6 @@ function pagesToRanges(pages){
   return out;
 }
 
-/* ---------------------------------------------------------------------
-   word geometry
-   ------------------------------------------------------------------- */
 function bboxFromQuads(quads){
   if (!quads) return null;
   var xs = [], ys = [], qi, k, q;
@@ -218,21 +192,17 @@ function findAnchor(words, tok){
   return null;
 }
 
-/* is this a 1042-S FORM page? requires 13a/13b/13c laid out as the recipient box:
-   13a & 13c in the same left column a sensible distance apart, 13b to their right.
-   This rejects instruction/prose pages that merely cite box numbers. */
 function isFormPage(words){
   var a = findAnchor(words, "13a"), b = findAnchor(words, "13b"), c = findAnchor(words, "13c");
   if (!a || !b || !c || !a.bb || !b.bb || !c.bb) return false;
   var vgap = Math.abs(a.yc - c.yc);
-  if (vgap < CONFIG.minRowGapPts) return false;               // must be different rows
-  if (vgap > CONFIG.maxRowGapPts) return false;               // but not a page apart (prose)
-  if (Math.abs(a.xc - c.xc) > CONFIG.colAlignTolPts) return false;  // same left column
-  if (b.xc <= a.xc) return false;                             // 13b to the right of 13a
+  if (vgap < CONFIG.minRowGapPts) return false;
+  if (vgap > CONFIG.maxRowGapPts) return false;
+  if (Math.abs(a.xc - c.xc) > CONFIG.colAlignTolPts) return false;
+  if (b.xc <= a.xc) return false;
   return true;
 }
 
-/* PRIMARY name reader — by position (the box below 13a, left of 13b, above 13c) */
 function extractNamePosition(words, dims){
   var a = findAnchor(words, "13a"), b = findAnchor(words, "13b"), c = findAnchor(words, "13c");
   if (!a || !a.bb) return "";
@@ -270,7 +240,6 @@ function extractNamePosition(words, dims){
   return cleanName(parts.join(" "));
 }
 
-/* CROSS-CHECK name reader — by reading order (independent method) */
 function extractNameReadingOrder(words){
   var a = findAnchor(words, "13a");
   if (!a) return "";
@@ -280,7 +249,7 @@ function extractNameReadingOrder(words){
   for (i = a.i + 1; i < words.length && count < 12; i++){
     w = words[i]; nt = w.ntext;
     if (stop[nt]) break;
-    if (!started && skip[nt]) continue;   // skip only LEADING label words, not a name that contains them
+    if (!started && skip[nt]) continue;
     if (nt === "") continue;
     started = true;
     picked.push(w.text); count++;
@@ -288,13 +257,9 @@ function extractNameReadingOrder(words){
   return cleanName(picked.join(" "));
 }
 
-/* ---------------------------------------------------------------------
-   form-type detection + generic label-anchored name reader (1099 / W-2 / 1042)
-   ------------------------------------------------------------------- */
 function hasTok(words, tok){ return findAnchor(words, tok) != null; }
 function hasTokPrefix(words, pfx){ for (var i = 0; i < words.length; i++){ if (words[i].ntext.indexOf(pfx) === 0) return true; } return false; }
 
-/* find a label made of consecutive tokens on ~one line; returns its bbox + the matched words */
 function findLabel(words, seq){
   if (!seq || !seq.length) return null;
   var i, k, j;
@@ -322,7 +287,6 @@ function findLabel(words, seq){
   return null;
 }
 
-/* read the value that sits just BELOW a label (PDF space: lower y), in a horizontal band */
 function nameBelowLabel(words, dims, label, opt){
   if (!label) return "";
   opt = opt || {};
@@ -341,7 +305,7 @@ function nameBelowLabel(words, dims, label, opt){
   }
   if (!picks.length) return "";
   if (picks.length > CONFIG.maxNameWords) picks = picks.slice(0, CONFIG.maxNameWords);
-  picks.sort(function (a, b){ if (Math.abs(a.yc - b.yc) > 4) return b.yc - a.yc; return a.xc - b.xc; });  // top line first, then left->right
+  picks.sort(function (a, b){ if (Math.abs(a.yc - b.yc) > 4) return b.yc - a.yc; return a.xc - b.xc; });
   var parts = []; for (i = 0; i < picks.length; i++) parts.push(picks[i].text);
   return cleanName(parts.join(" "));
 }
@@ -350,9 +314,8 @@ function is1099(words){ return hasTokPrefix(words, "1099") && hasTok(words, "rec
 function isW2(words){ return (hasTok(words, "wage") && hasTok(words, "statement")) || (hasTokPrefix(words, "w2") && hasTok(words, "employees")); }
 function is1042Annual(words){ return hasTok(words, "1042") && hasTok(words, "withholding") && hasTok(words, "agent") && !isFormPage(words); }
 
-/* identify the form type on a page and read its recipient/employee name */
 function identifyForm(words, dims){
-  if (isFormPage(words)) return { type: "1042-S", name: extractNamePosition(words, dims) };   // 13a/13b/13c box
+  if (isFormPage(words)) return { type: "1042-S", name: extractNamePosition(words, dims) };
   if (FORM_CONFIG.enable1099 && is1099(words)) return { type: "1099", name: nameBelowLabel(words, dims, findLabel(words, FORM_CONFIG.label1099), { stop: { street: 1, address: 1, city: 1 } }) };
   if (FORM_CONFIG.enableW2 && isW2(words)) return { type: "W-2", name: nameBelowLabel(words, dims, findLabel(words, FORM_CONFIG.labelW2), {}) };
   if (FORM_CONFIG.enable1042annual && is1042Annual(words)) { var ag = nameBelowLabel(words, dims, findLabel(words, FORM_CONFIG.label1042agent), {}); return { type: "1042", name: ag || FORM_CONFIG.annualGroupName, annual: true }; }
@@ -371,9 +334,6 @@ function readPage(doc, p){
   return { page: p, form: form, formType: f.type, annual: !!f.annual, name: name, alt: alt, agree: agree, nWords: words.length };
 }
 
-/* ---------------------------------------------------------------------
-   segmentation — walk every page, build recipient packets (page-list based)
-   ------------------------------------------------------------------- */
 function detectSegments(doc){
   var n = doc.numPages;
   var segments = [], perPage = [], headerPages = [], reviewPages = [], rotatedPages = [];
@@ -388,19 +348,19 @@ function detectSegments(doc){
       suspended = false;
       var ph = isPlaceholderName(info.name);
       if (current === null || ph || current.placeholder || normTok(info.name) !== normTok(current.name)){
-        current = { name: info.name, placeholder: ph, pages: [p] };   // new packet
+        current = { name: info.name, placeholder: ph, pages: [p] };
         segments.push(current);
       } else {
-        current.pages.push(p);                                        // same recipient continues
+        current.pages.push(p);
       }
     } else if (info.form && info.name === ""){
-      info.flag = "FORM_NO_NAME";        // a form we couldn't attribute -> quarantine, don't guess
+      info.flag = "FORM_NO_NAME";
       suspended = true;
       reviewPages.push(p);
     } else {
-      if (suspended) reviewPages.push(p);           // no-name pages after an unreadable form: uncertain
-      else if (current) current.pages.push(p);      // instruction page -> current recipient
-      else headerPages.push(p);                     // pages before the first named form
+      if (suspended) reviewPages.push(p);
+      else if (current) current.pages.push(p);
+      else headerPages.push(p);
     }
 
     if ((p + 1) % 100 === 0) P("  ...scanned " + (p + 1) + " / " + n + " pages");
@@ -409,12 +369,11 @@ function detectSegments(doc){
            reviewPages: reviewPages, rotatedPages: rotatedPages, numPages: n };
 }
 
-/* group same-named packets (placeholders stay separate), sort alphabetically */
 function groupByRecipient(segments){
   var map = {}, order = [], i, j, seg, key, ph = 0;
   for (i = 0; i < segments.length; i++){
     seg = segments[i];
-    key = seg.placeholder ? (" ph" + (ph++)) : normTok(seg.name);   // unique key per placeholder packet
+    key = seg.placeholder ? (" ph" + (ph++)) : normTok(seg.name);
     if (!map[key]){ map[key] = { key: key, displayName: seg.name, placeholder: !!seg.placeholder, pages: [], segCount: 0 }; order.push(key); }
     for (j = 0; j < seg.pages.length; j++) map[key].pages.push(seg.pages[j]);
     map[key].segCount++;
@@ -428,7 +387,6 @@ function groupByRecipient(segments){
   return groups;
 }
 
-/* assign the final, de-duplicated filename to every group (one source of truth) */
 function assignFilenames(groups, folder){
   var used = {}, i, base, fname, c;
   for (i = 0; i < groups.length; i++){
@@ -441,9 +399,6 @@ function assignFilenames(groups, folder){
   }
 }
 
-/* ---------------------------------------------------------------------
-   name-similarity (Dice bigram) for near-duplicate flagging
-   ------------------------------------------------------------------- */
 function bigrams(s){ var m = {}, i; s = normTok(s); for (i = 0; i < s.length - 1; i++){ var g = s.substring(i, i + 2); m[g] = (m[g] || 0) + 1; } return m; }
 function dice(a, b){
   a = normTok(a); b = normTok(b);
@@ -454,9 +409,6 @@ function dice(a, b){
   return (2 * inter) / (na + nb);
 }
 
-/* ---------------------------------------------------------------------
-   VERIFICATION / DOUBLE-CHECK report
-   ------------------------------------------------------------------- */
 function verify(det, groups){
   var i, j, g;
   var n = det.numPages;
@@ -475,7 +427,7 @@ function verify(det, groups){
   for (i = 0; i < groups.length; i++) sizes.push(groups[i].pages.length);
   sizes.sort(function (a, b){ return a - b; });
   var med = sizes.length ? sizes[Math.floor(sizes.length / 2)] : 0;
-  var outlierThreshold = Math.max(CONFIG.packetOutlierPages, med * 3);   // relative: only genuinely anomalous packets
+  var outlierThreshold = Math.max(CONFIG.packetOutlierPages, med * 3);
   for (i = 0; i < groups.length; i++){
     g = groups[i];
     if (g.pages.length > outlierThreshold) outliers.push({ name: g.displayName, size: g.pages.length, first: g.pages[0] + 1 });
@@ -493,7 +445,6 @@ function verify(det, groups){
   var placeholders = 0;
   for (i = 0; i < groups.length; i++) if (groups[i].placeholder) placeholders++;
 
-  /* form-type breakdown (multi-form) */
   var typeCount = {}, typeOrder = [], tt;
   for (i = 0; i < det.perPage.length; i++){ tt = det.perPage[i].formType; if (tt){ if (!typeCount[tt]){ typeCount[tt] = 0; typeOrder.push(tt); } typeCount[tt]++; } }
   var typeStr = []; for (i = 0; i < typeOrder.length; i++) typeStr.push(typeOrder[i] + ": " + typeCount[typeOrder[i]]);
@@ -550,9 +501,6 @@ function verify(det, groups){
 }
 function firstFew(arr, k){ var out = [], i; for (i = 0; i < arr.length && i < k; i++) out.push(arr[i] + 1); return out.join(", ") + (arr.length > k ? ", ..." : ""); }
 
-/* ---------------------------------------------------------------------
-   writing output PDFs (all page-list based; never overwrites the source)
-   ------------------------------------------------------------------- */
 function writeSplit(doc, groups, src){
   var made = 0, failed = {}, i, k, g, ranges, d;
   P("Writing per-recipient files...");
@@ -572,7 +520,7 @@ function writeSplit(doc, groups, src){
       made++;
       if (made % 25 === 0) P("  ...wrote " + made + " files");
     } catch (e){ failed[g.key] = 1; P("  FAILED " + g.displayName + " : " + e.toString()); }
-    finally { if (d){ try { d.closeDoc(true); } catch (e2) {} } }   // never leak the open doc
+    finally { if (d){ try { d.closeDoc(true); } catch (e2) {} } }
   }
   P("  per-recipient files written: " + made);
   return failed;
@@ -615,9 +563,6 @@ function writeRangesFile(doc, pages, outPath, src, label){
   finally { if (d){ try { d.closeDoc(true); } catch (e2) {} } }
 }
 
-/* ---------------------------------------------------------------------
-   retrieval index + find()  ("when the customer asks, give them the form")
-   ------------------------------------------------------------------- */
 var RECIPIENT_INDEX = null;
 
 function buildIndex(groups, filesWritten, failed){
@@ -667,7 +612,6 @@ function find(q){
   return pool;
 }
 
-/* open a recipient's file, or explain accurately if it wasn't written */
 function openMatch(r){
   P("Match: " + r.name + "  (" + r.pageCount + " pp, pages " + r.ranges + ")");
   if (r.exists){ P("Opening: " + r.file); openByPath(r.file); }
@@ -681,11 +625,9 @@ function openForm(name){
   P("No exact match for \"" + name + "\". Try  find(\"" + name + "\")");
 }
 
-/* print the whole recipient list as CSV — copy it into a .csv and open in Excel.
-   A handy manifest: which recipient is in which file, and which pages. */
 function csvCell(s){
   s = String(s);
-  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;                 // neutralize CSV/Excel formula injection
+  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
   if (/[",\n]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
   return s;
 }
@@ -712,9 +654,6 @@ function rebuildIndex(){
   buildIndex(groups, false, {});
 }
 
-/* ---------------------------------------------------------------------
-   MAIN
-   ------------------------------------------------------------------- */
 function organize(){
   var doc = G_DOC;
   if (!doc || !doc.numPages){ P("ERROR: no active PDF. Open your 1042-S PDF, make it the front window, then re-paste this script."); return; }
@@ -735,7 +674,6 @@ function organize(){
   verify(det, groups);
   P("Output folder: " + folder);
 
-  /* preflight: make sure nothing we plan to write equals the source PDF */
   var src = doc.path, i, collide = 0;
   for (i = 0; i < groups.length; i++) if (samePath(groups[i].file, src)) collide++;
   if (samePath(folder + CONFIG.combinedName, src)) collide++;
@@ -756,7 +694,7 @@ function organize(){
   writeRangesFile(doc, det.headerPages, folder + "_REVIEW_unmatched_head.pdf", src, "pages before the first named form");
   writeRangesFile(doc, det.reviewPages, folder + "_REVIEW_unreadable_forms.pdf", src, "unreadable/uncertain form pages");
 
-  buildIndex(groups, didSplit, failed);   // only mark per-recipient files as existing if we actually wrote them
+  buildIndex(groups, didSplit, failed);
 
   var nFailed = 0, k; for (k in failed) if (failed.hasOwnProperty(k)) nFailed++;
   P("");
@@ -768,9 +706,6 @@ function organize(){
   else P(">>> (Per-recipient retrieval via find() needs CONFIG.mode = \"split\" or \"both\".)");
 }
 
-/* ---------------------------------------------------------------------
-   CALIBRATION helpers — run these first on a sample page (1-based input)
-   ------------------------------------------------------------------- */
 function testName(humanPage){
   var doc = G_DOC, p = humanPage - 1;
   var r = readPage(doc, p);
@@ -780,7 +715,7 @@ function testName(humanPage){
   P("   agree           : " + r.agree);
   return r;
 }
-/* which form type is this page, and what name did each detector read? (calibration) */
+
 function identifyForm_page(humanPage){
   var doc = G_DOC, p = humanPage - 1, words = pageWords(doc, p), dims = pageDims(doc, p);
   var f = identifyForm(words, dims);
