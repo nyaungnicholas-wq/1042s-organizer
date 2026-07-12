@@ -750,6 +750,7 @@ function rebuildIndex(){
    State lives in the global _RUN so it survives across the scheduled callbacks.
    --------------------------------------------------------------------------- */
 var _RUN = null;
+var _SCAN_CACHE = null;   // remembers the last scan so a repeat run (preview -> real) skips re-reading
 var SCAN_CHUNK = 5;       // pages read per batch (small = stays responsive, never "not responding")
 var WRITE_CHUNK = 3;      // per-recipient files written per batch
 var COMBINE_CHUNK = 25;   // page-ranges merged into the combined file per batch
@@ -777,6 +778,12 @@ function organize(){
     folder: (CONFIG.outputFolder && CONFIG.outputFolder.length) ? ensureSlash(CONFIG.outputFolder) : folderOf(doc.path),
     async: _asyncAvail()
   };
+  if (_SCAN_CACHE && _SCAN_CACHE.path === _RUN.src && _SCAN_CACHE.n === _RUN.n){
+    P("Reusing the scan from your preview (no need to re-read the pages)...");
+    _RUN.det = _SCAN_CACHE.det;
+    _afterScanData();
+    return;
+  }
   P("Reading " + _RUN.n + " pages... progress shows below. Acrobat stays usable — please DON'T force-quit.");
   _scanTick();
 }
@@ -793,6 +800,13 @@ function _scanTick(){
 function _scanDone(){
   var R = _RUN;
   R.det = scanResult(R.S);
+  _SCAN_CACHE = { path: R.src, n: R.n, det: R.det };   // remember it so a 2nd run needn't re-read
+  _afterScanData();
+}
+
+/* everything after the (possibly cached) page read: group, name-check, report */
+function _afterScanData(){
+  var R = _RUN;
   R.groups = groupByRecipient(R.det.segments);
   assignFilenames(R.groups, R.folder);
   R.dupes = [];

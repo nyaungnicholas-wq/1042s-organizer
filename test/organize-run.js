@@ -40,11 +40,12 @@ var PAGES = [], NAMEOF = [];
 for (var s = 0; s < SEQ.length; s++) { PAGES.push(formPage(SEQ[s])); NAMEOF.push(SEQ[s]); PAGES.push(instructionPage()); NAMEOF.push("(i)"); }
 var TOTAL = PAGES.length;   // 30
 
+var READS = 0;
 function makeDoc() {
   return {
     numPages: PAGES.length, path: "/T/source.pdf",
     getPageNumWords: function (p) { return PAGES[p].length; },
-    getPageNthWord: function (p, i) { return PAGES[p][i].t; },
+    getPageNthWord: function (p, i) { READS++; return PAGES[p][i].t; },
     getPageNthWordQuads: function (p, i) { return quad(PAGES[p][i]); },
     getPageBox: function () { return [0, 792, 612, 0]; },
     getPageRotation: function () { return 0; },
@@ -69,7 +70,7 @@ var fails = 0, passes = 0;
 function check(label, cond) { if (cond) passes++; else { fails++; console.log("FAIL  " + label); } }
 
 function run(mode) {
-  FS = {}; WLOG = []; Q = [];
+  FS = {}; WLOG = []; Q = []; _SCAN_CACHE = null;
   global.app = makeApp(mode === "async");
   G_DOC = makeDoc();
   CONFIG.dryRun = false; CONFIG.mode = "both"; CONFIG.filePrefix = "1042S_";
@@ -98,6 +99,18 @@ console.log("=== ASYNC mode (chunked via app.setTimeOut) ===");
 run("async");
 console.log("\n=== SYNC fallback (no app.setTimeOut) ===");
 run("sync");
+
+console.log("\n=== SCAN CACHE (preview then real run must not re-read) ===");
+(function () {
+  _SCAN_CACHE = null; FS = {}; Q = []; global.app = makeApp(false); G_DOC = makeDoc(); CONFIG.mode = "both";
+  READS = 0; CONFIG.dryRun = true; organize(); while (Q.length) FNS[Q.shift()]();
+  var previewReads = READS;
+  READS = 0; CONFIG.dryRun = false; organize(); while (Q.length) FNS[Q.shift()]();
+  var realReads = READS;
+  check("preview actually read the pages", previewReads > 0);
+  check("real run reused the scan (0 new page reads)", realReads === 0);
+  check("real run still wrote all recipient files", (function () { var n = 0, k; for (k in FS) { var b = k.replace(/^.*\//, ""); if (b.indexOf("1042S_") === 0) n++; } return n === 10; })());
+})();
 
 console.log("\n==================================================");
 console.log(fails === 0 ? ("ALL " + passes + " CHECKS PASSED") : (fails + " FAILED, " + passes + " passed"));
