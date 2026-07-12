@@ -100,6 +100,44 @@ run("async");
 console.log("\n=== SYNC fallback (no app.setTimeOut) ===");
 run("sync");
 
+console.log("\n=== PHYSICAL PAGE ORDER (combined file must be truly re-sorted) ===");
+(function () {
+  /* mock that records the exact SEQUENCE of source pages placed in each output */
+  var ORD = {};
+  _SCAN_CACHE = null; FS = {}; Q = [];
+  function put(path, s, e) { if (!ORD[path]) ORD[path] = []; for (var x = s; x <= e; x++) ORD[path].push(x); }
+  global.app = {
+    openDoc: function (o) {
+      var p = (typeof o === "object") ? o.cPath : o;
+      return { numPages: (ORD[p] || []).length,
+        insertPages: function (io) { put(p, io.nStart, io.nEnd); this.numPages = ORD[p].length; FS[p] = ORD[p].length; },
+        saveAs: function (so) { var d = (typeof so === "object") ? so.cPath : so; ORD[d] = (ORD[p] || []).slice(); FS[d] = ORD[d].length; },
+        closeDoc: function () {} };
+    }
+  };
+  G_DOC = makeDoc();
+  G_DOC.extractPages = function (o) { ORD[o.cPath] = []; put(o.cPath, o.nStart, o.nEnd); FS[o.cPath] = ORD[o.cPath].length; };
+  CONFIG.dryRun = false; CONFIG.mode = "both";
+  organize(); while (Q.length) FNS[Q.shift()]();
+
+  /* expected physical order: recipients A->Z, each one's form+instruction pages in original order */
+  var uniq = {}, i; for (i = 0; i < SEQ.length; i++) uniq[SEQ[i]] = 1;
+  var sortedNames = Object.keys(uniq).sort();
+  var expected = [];
+  for (i = 0; i < sortedNames.length; i++) for (var s2 = 0; s2 < SEQ.length; s2++) if (SEQ[s2] === sortedNames[i]) { expected.push(2 * s2); expected.push(2 * s2 + 1); }
+  var got = ORD["/T/_ORGANIZED_1042S_sorted.pdf"] || [];
+  check("combined file page SEQUENCE = alphabetical recipient order", got.join(",") === expected.join(","));
+  check("combined file physically reordered (not original order)", got.join(",") !== Object.keys(PAGES).map(Number).join(","));
+  /* every form page is physically followed by its instruction page */
+  var paired = true;
+  for (i = 0; i < got.length; i += 2) if (got[i + 1] !== got[i] + 1 || got[i] % 2 !== 0) paired = false;
+  check("in the sorted file every form page is physically followed by its instruction", paired);
+  /* per-recipient file for 'apple' contains exactly apple's pages in ascending order */
+  var appleExpected = [];
+  for (i = 0; i < SEQ.length; i++) if (SEQ[i] === "apple") { appleExpected.push(2 * i); appleExpected.push(2 * i + 1); }
+  check("apple's own file = apple's pages in order", (ORD["/T/1042S_apple.pdf"] || []).join(",") === appleExpected.join(","));
+})();
+
 console.log("\n=== POSITIONAL-ONLY ACROBAT (client build rejecting object-form args) ===");
 (function () {
   /* simulates the Windows build that throws RangeError: Invalid argument value
