@@ -171,18 +171,42 @@ function pageDims(doc, p){
   catch (e) { return { w: 612, h: 792 }; }
 }
 
-function pageWords(doc, p){
-  var out = [], n = 0, i, t, bb, xc, yc;
+function pageWordsTextOnly(doc, p){
+  var out = [], n = 0, i, t;
   try { n = doc.getPageNumWords(p); } catch (e) { return out; }
   for (i = 0; i < n; i++){
     t = "";
     try { t = doc.getPageNthWord(p, i, true); } catch (e2) { t = ""; }
     if (t === null || t === undefined) t = "";
+    out.push({ i: i, text: t, ntext: normTok(t), bb: null, xc: 0, yc: 0 });
+  }
+  return out;
+}
+
+/* superset of every form classifier's required anchor tokens (see is1099/isW2/
+   is1042Annual/isFormPage). If none of these are present as plain text, the page
+   cannot be any recognized form, so we skip it WITHOUT the expensive per-word
+   coordinate lookup (getPageNthWordQuads) below — this is what makes organize()
+   fast on a large document: prose/instruction pages (about half of a real file)
+   are ruled out on cheap text alone. */
+function mightBeAnyForm(cheap){
+  if (hasTok(cheap, "13a")) return true;
+  if (FORM_CONFIG.enable1099 && hasTokPrefix(cheap, "1099") && hasTok(cheap, "recipients")) return true;
+  if (FORM_CONFIG.enableW2 && ((hasTok(cheap, "wage") && hasTok(cheap, "statement")) || (hasTokPrefix(cheap, "w2") && hasTok(cheap, "employees")))) return true;
+  if (FORM_CONFIG.enable1042annual && hasTok(cheap, "1042") && hasTok(cheap, "withholding") && hasTok(cheap, "agent")) return true;
+  return false;
+}
+
+function pageWords(doc, p){
+  var cheap = pageWordsTextOnly(doc, p);
+  if (!mightBeAnyForm(cheap)) return cheap;   // definitely not a form: skip all coordinate lookups
+  var out = [], i, bb, xc, yc;
+  for (i = 0; i < cheap.length; i++){
     bb = null;
     try { bb = bboxFromQuads(doc.getPageNthWordQuads(p, i)); } catch (e3) { bb = null; }
     xc = 0; yc = 0;
     if (bb){ xc = (bb.xmin + bb.xmax) / 2; yc = (bb.ymin + bb.ymax) / 2; }
-    out.push({ i: i, text: t, ntext: normTok(t), bb: bb, xc: xc, yc: yc });
+    out.push({ i: cheap[i].i, text: cheap[i].text, ntext: cheap[i].ntext, bb: bb, xc: xc, yc: yc });
   }
   return out;
 }
