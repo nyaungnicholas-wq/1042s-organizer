@@ -70,7 +70,7 @@ var CONFIG = {
   packetOutlierPages: 8,
   similarNameThreshold: 0.86,
   nearDupeMaxNames: 1500,
-  indexPrintCap: 150
+  indexPrintCap: 25          // Acrobat's console buffer is small; the full list is in exportIndexCSV()
 };
 
 var PLACEHOLDER_KEYS = { "unknownrecipient": 1, "unknown": 1, "withholdingratepool": 1, "withholdingratepoolgeneral": 1 };
@@ -767,6 +767,7 @@ function organize(){
   if (!doc || !doc.numPages){ P("ERROR: no active PDF. Open your PDF, make it the front window, then re-paste this script."); return; }
   if (!doc.path){ P("ERROR: this PDF isn't saved to disk. Do File > Save first, then run organize() again."); return; }
 
+  try { console.clear(); } catch (e) {}   // Acrobat's console buffer is tiny; start each run empty
   P("========================================================");
   P("  1042-S ORGANIZER");
   P("  Pages: " + doc.numPages + "   dryRun=" + CONFIG.dryRun + "   mode=" + CONFIG.mode);
