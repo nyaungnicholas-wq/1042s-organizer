@@ -690,11 +690,15 @@ function writeSplit(doc, groups, src){
   return failed;
 }
 
-function writeCombined(doc, groups, folder, src){
+function writeCombined(doc, groups, folder, src, tailPages){
   var outPath = folder + CONFIG.combinedName;
   if (samePath(outPath, src)){ P("Combined SKIPPED (would overwrite source)."); return; }
   var ranges = [], i, k, g, gr, cdoc = null, bad = 0;
   for (i = 0; i < groups.length; i++){ g = groups[i]; gr = pagesToRanges(g.pages); for (k = 0; k < gr.length; k++) ranges.push(gr[k]); }
+  /* append any header/review pages at the END so the combined file contains
+     EVERY page of the original — nothing is missing even if some pages couldn't
+     be attributed to a recipient. */
+  if (tailPages && tailPages.length){ gr = pagesToRanges(tailPages); for (k = 0; k < gr.length; k++) ranges.push(gr[k]); }
   if (!ranges.length){ P("Combined: nothing to write."); return; }
   P("Writing combined sorted file: " + outPath);
   try {
@@ -939,15 +943,20 @@ function _runSync(doc, folder){
 
   var didSplit = (CONFIG.mode === "split" || CONFIG.mode === "both"), failed = {};
   if (didSplit) failed = writeSplit(doc, groups, src);
-  if (CONFIG.mode === "combine" || CONFIG.mode === "both") writeCombined(doc, groups, folder, src);
+  var tail = det.headerPages.concat(det.reviewPages);   // pages not attributed to a recipient
+  if (CONFIG.mode === "combine" || CONFIG.mode === "both") writeCombined(doc, groups, folder, src, tail);
   writeRangesFile(doc, det.headerPages, folder + "_REVIEW_unmatched_head.pdf", src, "pages before the first named form");
   writeRangesFile(doc, det.reviewPages, folder + "_REVIEW_unreadable_forms.pdf", src, "unreadable/uncertain form pages");
   buildIndex(groups, didSplit, failed);
   var nFailed = 0, k; for (k in failed) if (failed.hasOwnProperty(k)) nFailed++;
+
+  var gp = 0; for (i = 0; i < groups.length; i++) gp += groups[i].pages.length;
   P("");
   P(">>> DONE.");
+  P(">>> PAGE ACCOUNTING:  " + gp + " sorted into recipients  +  " + tail.length + " set aside for review  =  " + (gp + tail.length) + " of " + doc.numPages + (gp + tail.length === doc.numPages ? "  (all pages accounted for)" : "  *** MISMATCH ***"));
+  if (tail.length) P(">>> " + tail.length + " page(s) had no readable recipient name -> _REVIEW_unreadable_forms.pdf / _REVIEW_unmatched_head.pdf. The combined file includes them at the END.");
   if (didSplit) P(">>> Recipients: " + groups.length + "   Per-recipient files written: " + (groups.length - nFailed) + (nFailed ? ("   FAILED/SKIPPED: " + nFailed) : ""));
-  if (CONFIG.mode === "combine" || CONFIG.mode === "both") P(">>> Combined file: " + folder + CONFIG.combinedName);
+  if (CONFIG.mode === "combine" || CONFIG.mode === "both") P(">>> Combined file (ALL " + doc.numPages + " pages): " + folder + CONFIG.combinedName);
   if (didSplit) P(">>> Retrieve a recipient with:  find(\"name\")   Manifest: exportIndexCSV()");
 }
 
