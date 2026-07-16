@@ -1,18 +1,9 @@
-/* ===== QUICK WRITE TEST — runs the moment you paste this in =====
-   Tells you immediately whether Acrobat can save files to your folder,
-   and whether the PDF is locked. Look at these 3 lines first. ================ */
-try {
-  var __d = this;
-  if (__d && __d.path) {
-    var __f = String(__d.path).replace(/[^\/]+$/, "");
-    try { console.println("PDF secured?   " + __d.securityHandler); } catch (e0) {}
-    try { __d.extractPages(0, 0, __f + "_probe1.pdf"); console.println("clean write:   OK   (delete _probe1.pdf later)"); }
-    catch (e1) { console.println("clean write:   FAILED  " + e1); }
-    try { __d.extractPages(0, 0, __f + "_probe with spaces.pdf"); console.println("spaces write:  OK   (delete it later)"); }
-    catch (e2) { console.println("spaces write:  FAILED  " + e2); }
-    console.println("---- if a write FAILED, that's why organize() can't save. Send me these lines. ----");
-  }
-} catch (eProbe) {}
+/* No write test runs on paste. It used to: pasting this file immediately wrote
+   two PDFs (_probe1.pdf and "_probe with spaces.pdf") containing page 1 of the
+   open 1042-S into the document's folder — taxpayer data written to disk with no
+   warning, which also contradicted the documented "dryRun writes nothing".
+   The identical check is still available on demand as probe(), which the load
+   banner points at. Nothing is written until you ask for it. ================= */
 
 /* ===========================================================================
 
@@ -762,7 +753,11 @@ function find(q){
   for (i = 0; i < RECIPIENT_INDEX.length; i++){
     r = RECIPIENT_INDEX[i]; var rn = normTok(r.name);
     if (rn === nq) exact.push(r);
-    else if (nq.length >= 2 && (rn.indexOf(nq) >= 0 || nq.indexOf(rn) >= 0)) subs.push(r);
+    // Only "the query is part of this recipient's name" counts as a partial
+    // match. The reverse (nq.indexOf(rn)) matched when the RECIPIENT's name was
+    // a substring of the QUERY — so searching "JOHN SMITH JR" also matched an
+    // unrelated recipient named "SMITH", i.e. a different taxpayer.
+    else if (nq.length >= 2 && rn.indexOf(nq) >= 0) subs.push(r);
   }
   var pool = exact.length ? exact : subs;
   if (!pool.length){
@@ -773,8 +768,11 @@ function find(q){
     for (i = 0; i < 5 && i < scored.length; i++) P("   " + Math.round(scored[i].s * 100) + "%  " + scored[i].r.name);
     return;
   }
-  if (pool.length === 1){ openMatch(pool[0]); return pool[0]; }
-  P(pool.length + " matches for \"" + q + "\":");
+  // Only an EXACT, unambiguous name match may auto-open a document. Auto-opening
+  // a lone PARTIAL match would hand the user a different taxpayer's 1042-S
+  // without them ever confirming the name.
+  if (exact.length === 1){ openMatch(exact[0]); return exact[0]; }
+  P(pool.length + (exact.length ? " exact" : " partial") + " match(es) for \"" + q + "\":");
   for (i = 0; i < pool.length; i++) P("   [" + i + "] " + pool[i].name + "  (" + pool[i].pageCount + " pp)  " + pool[i].file);
   P("Open one with:  openForm(\"exact name\")");
   return pool;
